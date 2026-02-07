@@ -26,3 +26,15 @@ func TestIsUTMCtlAutomationDenied(t *testing.T) {
 		t.Fatalf("expected false")
 	}
 }
+
+func TestIsUTMCtlEventError(t *testing.T) {
+	if !isUTMCtlEventError("Error from event: The operation couldn’t be completed. (OSStatus error -10004.)") {
+		t.Fatalf("expected true")
+	}
+	if !isUTMCtlEventError("OSStatus error -10004") {
+		t.Fatalf("expected true")
+	}
+	if isUTMCtlEventError("ok\n") {
+		t.Fatalf("expected false")
+	}
+}
