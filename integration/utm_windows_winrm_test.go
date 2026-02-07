@@ -44,32 +44,35 @@ func TestUTMWindowsWinRMIntegration(t *testing.T) {
 	}
 
 	if endpoint == "" {
-		ip, err := discoverUTMIPv4("")
-		if err != nil {
-			t.Fatalf("自动获取 UTM IP 失败: %v", err)
+		// IP 获取失败时不要直接失败：仍可 fallback 到 utmctl exec 在 guest 内执行并完成 WinRM 配置。
+		if ip, err := discoverUTMIPv4(""); err == nil && strings.TrimSpace(ip) != "" {
+			endpoint = "http://" + ip + ":5985/wsman"
+		} else if testing.Verbose() {
+			t.Logf("自动获取 UTM IP 失败，将 fallback 到 utmctl exec: %v", err)
 		}
-		endpoint = "http://" + ip + ":5985/wsman"
 	}
 
 	// Prefer WinRM via pywinrm; if missing/unavailable in CI, fall back to utmctl exec.
-	if _, err := exec.LookPath("python3"); err == nil {
-		var out bytes.Buffer
-		cmd := exec.Command("python3",
-			"integration/winrm_run.py",
-			"--endpoint", endpoint,
-			"--user", user,
-			"--password", password,
-			"--repo-dir", repoDir,
-		)
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		if err := cmd.Run(); err == nil {
-			if testing.Verbose() {
-				t.Logf("windows output:\n%s", out.String())
+	if endpoint != "" {
+		if _, err := exec.LookPath("python3"); err == nil {
+			var out bytes.Buffer
+			cmd := exec.Command("python3",
+				"integration/winrm_run.py",
+				"--endpoint", endpoint,
+				"--user", user,
+				"--password", password,
+				"--repo-dir", repoDir,
+			)
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err == nil {
+				if testing.Verbose() {
+					t.Logf("windows output:\n%s", out.String())
+				}
+				return
+			} else if testing.Verbose() {
+				t.Logf("WinRM 运行失败，尝试 fallback 到 utmctl exec：%v\n%s", err, out.String())
 			}
-			return
-		} else if testing.Verbose() {
-			t.Logf("WinRM 运行失败，尝试 fallback 到 utmctl exec：%v\n%s", err, out.String())
 		}
 	}
 
