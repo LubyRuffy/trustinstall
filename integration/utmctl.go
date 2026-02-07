@@ -7,16 +7,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strings"
 )
 
 const defaultUTMCtl = "/Applications/UTM.app/Contents/MacOS/utmctl"
+const defaultCIPrefix = "ci-os"
 
 func utmctlPath() string {
 	if p := strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTMCTL")); p != "" {
 		return p
 	}
 	return defaultUTMCtl
+}
+
+type utmVM struct {
+	UUID string
+	Name string
 }
 
 func discoverUTMIPv4(identifier string) (string, error) {
@@ -28,14 +36,12 @@ func discoverUTMIPv4(identifier string) (string, error) {
 		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_VM"))
 	}
 	if id == "" {
-		// Last resort: if only one VM is registered, use it.
-		ids, _ := utmctlList()
-		if len(ids) == 1 {
-			id = ids[0]
-		}
+		// CI 默认：优先选择名称前缀为 ci-os 的 VM。
+		vms, _ := utmctlListVMs()
+		id = pickUTMVMIdentifier(vms)
 	}
 	if id == "" {
-		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID")
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 开头的 VM", defaultCIPrefix)
 	}
 
 	utmctl := utmctlPath()
@@ -68,26 +74,84 @@ func discoverUTMIPv4(identifier string) (string, error) {
 	return "", fmt.Errorf("utmctl ip-address 未返回任何地址（identifier=%q）", id)
 }
 
-func utmctlList() ([]string, error) {
+func pickUTMVMIdentifier(vms []utmVM) string {
+	if len(vms) == 0 {
+		return ""
+	}
+
+	var ci []utmVM
+	for _, vm := range vms {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(vm.Name)), defaultCIPrefix) {
+			ci = append(ci, vm)
+		}
+	}
+	if len(ci) == 1 {
+		// Use name to avoid UUID formatting issues.
+		return ci[0].Name
+	}
+	if len(ci) > 1 {
+		// Deterministic pick: smallest name.
+		sort.Slice(ci, func(i, j int) bool { return ci[i].Name < ci[j].Name })
+		return ci[0].Name
+	}
+
+	if len(vms) == 1 {
+		return vms[0].Name
+	}
+	return ""
+}
+
+func utmctlListVMs() ([]utmVM, error) {
 	utmctl := utmctlPath()
 	cmd := exec.Command(utmctl, "list", "--hide")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, err
 	}
-	// Output format is not formally specified. We keep this best-effort:
-	// take the last whitespace-separated token from each non-empty line as identifier.
-	var ids []string
+
+	// Example output:
+	// UUID                                 Status   Name
+	// 123e4567-e89b-12d3-a456-426614174000  Running  ci-os-windows
+	re := regexp.MustCompile(`^([0-9a-fA-F-]{36})\s+\S+\s+(.+)$`)
+	var vms []utmVM
 	for _, ln := range strings.Split(string(out), "\n") {
 		s := strings.TrimSpace(ln)
 		if s == "" {
 			continue
 		}
-		parts := strings.Fields(s)
-		if len(parts) == 0 {
+		if strings.HasPrefix(s, "UUID") && strings.Contains(s, "Status") {
 			continue
 		}
-		ids = append(ids, parts[len(parts)-1])
+		m := re.FindStringSubmatch(s)
+		if len(m) != 3 {
+			continue
+		}
+		vms = append(vms, utmVM{UUID: strings.TrimSpace(m[1]), Name: strings.TrimSpace(m[2])})
 	}
-	return ids, nil
+	return vms, nil
+}
+
+func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		// Same selection logic as discoverUTMIPv4
+		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_WINDOWS_VM"))
+		if id == "" {
+			vms, _ := utmctlListVMs()
+			id = pickUTMVMIdentifier(vms)
+		}
+	}
+	if id == "" {
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM")
+	}
+	utmctl := utmctlPath()
+
+	args := []string{"exec", "--hide", id, "--cmd"}
+	args = append(args, cmdArgs...)
+	c := exec.Command(utmctl, args...)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("utmctl exec 失败: %w: %s", err, string(out))
+	}
+	return string(out), nil
 }

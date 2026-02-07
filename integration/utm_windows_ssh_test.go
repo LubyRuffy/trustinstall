@@ -4,14 +4,12 @@ package integration
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
-	"unicode/utf16"
 )
 
 func TestUTMWindowsSSHIntegration(t *testing.T) {
@@ -20,9 +18,6 @@ func TestUTMWindowsSSHIntegration(t *testing.T) {
 	}
 	if os.Getenv("TRUSTINSTALL_WINDOWS_SSH_INTEGRATION") == "" {
 		t.Skip("未设置 TRUSTINSTALL_WINDOWS_SSH_INTEGRATION=1，跳过 UTM Windows SSH 集成测试")
-	}
-	if _, err := exec.LookPath("ssh"); err != nil {
-		t.Skip("未找到 ssh，跳过")
 	}
 
 	host := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_HOST"))
@@ -45,6 +40,28 @@ func TestUTMWindowsSSHIntegration(t *testing.T) {
 	port := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_PORT"))
 	keyPath := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_KEY"))
 	extra := strings.Fields(strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_EXTRA_ARGS")))
+
+	if _, err := exec.LookPath("ssh"); err != nil {
+		// CI 兜底：如果宿主机没有 ssh，就用 utmctl exec 在 guest 内直接执行。
+		if _, err := os.Stat(utmctlPath()); err != nil {
+			t.Skipf("未找到 ssh 且 utmctl 不可用（%s），跳过", utmctlPath())
+		}
+		ps := strings.Join([]string{
+			`$ErrorActionPreference = 'Stop'`,
+			fmt.Sprintf(`Set-Location -LiteralPath %s`, psSingleQuote(repoDir)),
+			`go version`,
+			`go test ./... -tags windows_integration -run TestWindowsInstallUninstall_SystemTrust -count=1 -v`,
+		}, "\n")
+		encoded := encodePowerShellEncodedCommand(ps)
+		out, err := utmctlExec("", "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
+		if err != nil {
+			t.Fatalf("utmctl exec 执行失败: %v\n%s", err, out)
+		}
+		if testing.Verbose() {
+			t.Logf("windows output:\n%s", out)
+		}
+		return
+	}
 
 	ps := strings.Join([]string{
 		`$ErrorActionPreference = 'Stop'`,
@@ -85,17 +102,4 @@ func TestUTMWindowsSSHIntegration(t *testing.T) {
 	}
 }
 
-func psSingleQuote(s string) string {
-	// PowerShell single-quoted string escaping: '' represents a single '.
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-func encodePowerShellEncodedCommand(script string) string {
-	// PowerShell -EncodedCommand expects UTF-16LE base64.
-	u16 := utf16.Encode([]rune(script))
-	b := make([]byte, 0, len(u16)*2)
-	for _, v := range u16 {
-		b = append(b, byte(v), byte(v>>8))
-	}
-	return base64.StdEncoding.EncodeToString(b)
-}
+// helpers live in powershell.go

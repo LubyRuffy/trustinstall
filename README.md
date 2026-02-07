@@ -205,6 +205,11 @@ go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count
 - `TRUSTINSTALL_UTM_WINDOWS_VM`：UTM VM 标识（完整名称或 UUID），用于自动获取 IP
 - `TRUSTINSTALL_UTMCTL`：utmctl 路径覆盖（默认 `/Applications/UTM.app/Contents/MacOS/utmctl`）
 
+CI 约定：
+
+- 若未设置 `TRUSTINSTALL_UTM_WINDOWS_VM`，会优先从 `utmctl list` 里自动选择名称以 `ci-os` 开头的 VM。
+- 若宿主机缺少 `ssh` 或 `pywinrm`，测试会自动 fallback 到 `utmctl exec` 在 guest 内执行（并做 best-effort 的 WinRM 配置）。
+
 ## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
 
 如果你更倾向用 WinRM，也可以通过 NTLM 在 5985 端口执行远程 PowerShell 来跑集成测试。
