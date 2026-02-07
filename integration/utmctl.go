@@ -41,8 +41,12 @@ func discoverUTMIPv4(identifier string) (string, error) {
 		vms, _ := utmctlListVMs()
 		id = pickUTMVMIdentifier(vms)
 	}
+	// If utmctl list is unavailable (e.g. SSH session / no login), fall back to scanning.
 	if id == "" {
-		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 或 %q 开头的 Windows VM（例如 ci-Windows）", defaultCIPrefixOS, defaultCIPrefixCI)
+		if ip, err := discoverWindowsVMIPv4ByScan(5985); err == nil {
+			return ip, nil
+		}
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 或 %q 开头的 Windows VM（例如 ci-Windows）；若在无登录/SSH 场景 utmctl 不可用，可设置 TRUSTINSTALL_WINDOWS_DISCOVERY_CIDRS 或手动设置 TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT", defaultCIPrefixOS, defaultCIPrefixCI)
 	}
 
 	utmctl := utmctlPath()
@@ -51,6 +55,10 @@ func discoverUTMIPv4(identifier string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
+		// If utmctl cannot talk to the UI session, fall back to scanning.
+		if ip, scanErr := discoverWindowsVMIPv4ByScan(5985); scanErr == nil {
+			return ip, nil
+		}
 		return "", fmt.Errorf("utmctl ip-address 失败: %w: %s", err, out.String())
 	}
 
