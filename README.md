@@ -149,6 +149,95 @@ wails3 dev
 TRUSTINSTALL_INTEGRATION=1 go test ./... -tags integration -run TestDockerLinuxIntegration -count=1
 ```
 
+## Docker 集成测试（Windows via dockur/windows）
+
+使用 [`dockur/windows`](https://github.com/dockur/windows) 在 Linux + KVM 上启动 Windows VM，在 VM 内运行 `go test` 以验证：
+
+- `InstallCA` 安装成功
+- `IsCertTrusted` 为 true（可信成功）
+- `UninstallCA` 卸载成功并能再次扫描为 0
+
+前置条件：
+
+- 宿主机必须是 Linux
+- 需要 KVM（`/dev/kvm` 存在）
+- 需要 Docker，并允许容器访问 `/dev/kvm` 与 `/dev/net/tun`
+
+运行：
+
+```bash
+TRUSTINSTALL_WINDOWS_INTEGRATION=1 go test ./integration -tags integration -run TestDockerWindowsDockurIntegration -count=1 -v
+```
+
+可选环境变量（调参）：
+
+- `TRUSTINSTALL_DOCKUR_WINDOWS_IMAGE`：默认 `dockurr/windows:latest`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_VERSION`：默认 `11`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_RAM`：默认 `6G`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_CPU`：默认 `4`
+
+## 集成测试（UTM Windows via SSH，适用于 Apple Silicon）
+
+在 Apple Silicon 上，更推荐用 UTM 跑一个 Windows VM（Windows ARM64），然后通过 SSH 远程触发 VM 内执行 `go test` 完成集成测试。
+
+前置条件：
+
+- Windows VM 内安装并启用 OpenSSH Server（确保 macOS 能 `ssh user@host` 连接）
+- Windows VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
+- Windows VM 内有本仓库代码（例如 `C:\src\trustinstall`）
+
+运行（在 macOS 上）：
+
+```bash
+TRUSTINSTALL_WINDOWS_SSH_INTEGRATION=1 \
+TRUSTINSTALL_WINDOWS_SSH_USER=youruser \
+TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
+go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count=1 -v
+```
+
+如果不设置 `TRUSTINSTALL_WINDOWS_SSH_HOST`，测试会尝试通过 `utmctl ip-address` 自动获取 IP（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
+
+可选环境变量：
+
+- `TRUSTINSTALL_WINDOWS_SSH_PORT`：默认 22
+- `TRUSTINSTALL_WINDOWS_SSH_KEY`：ssh 私钥路径（推荐）
+- `TRUSTINSTALL_WINDOWS_SSH_EXTRA_ARGS`：额外 ssh 参数（空格分隔）
+- `TRUSTINSTALL_UTM_WINDOWS_VM`：UTM VM 标识（完整名称或 UUID），用于自动获取 IP
+- `TRUSTINSTALL_UTMCTL`：utmctl 路径覆盖（默认 `/Applications/UTM.app/Contents/MacOS/utmctl`）
+
+CI 约定：
+
+- 若未设置 `TRUSTINSTALL_UTM_WINDOWS_VM`，会优先从 `utmctl list` 里自动选择名称以 `ci-os` 开头的 VM。
+- 若宿主机缺少 `ssh` 或 `pywinrm`，测试会自动 fallback 到 `utmctl exec` 在 guest 内执行（并做 best-effort 的 WinRM 配置）。
+
+## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
+
+如果你更倾向用 WinRM，也可以通过 NTLM 在 5985 端口执行远程 PowerShell 来跑集成测试。
+
+前置条件：
+
+- Windows VM 已启用 WinRM（HTTP 5985）并允许 NTLM 认证
+- Windows VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
+- Windows VM 内有本仓库代码（例如 `C:\src\trustinstall`）
+- macOS 需要 `python3`，并安装 `pywinrm`（包名：`pywinrm`）
+
+运行（在 macOS 上）：
+
+```bash
+TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1 \
+TRUSTINSTALL_WINDOWS_WINRM_USER='youruser' \
+TRUSTINSTALL_WINDOWS_WINRM_PASSWORD='yourpassword' \
+TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
+go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -count=1 -v
+```
+
+如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
+
+默认启用规则（CI）：
+
+- 在 hostname 以 `ci` 或 `ci-` 开头、或环境变量 `CI` 存在时，即使不设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION` 也会默认运行。
+- 如需关闭：设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=0`（或 `false/no/off`）。
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
