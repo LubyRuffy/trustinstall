@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -55,9 +56,11 @@ func TestUTMWindowsWinRMIntegration(t *testing.T) {
 	// Prefer WinRM via pywinrm; if missing/unavailable in CI, fall back to utmctl exec.
 	if endpoint != "" {
 		if _, err := exec.LookPath("python3"); err == nil {
+			_, thisFile, _, _ := runtime.Caller(0)
+			scriptPath := filepath.Join(filepath.Dir(thisFile), "winrm_run.py")
 			var out bytes.Buffer
 			cmd := exec.Command("python3",
-				"integration/winrm_run.py",
+				scriptPath,
 				"--endpoint", endpoint,
 				"--user", user,
 				"--password", password,
