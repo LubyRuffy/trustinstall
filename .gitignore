@@ -1,0 +1,23 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# Node / frontend
+**/node_modules/
+**/dist/
+**/.vite/
+**/.turbo/
+
+# Wails / build outputs
+**/bin/
+**/.wails/
+*.app/
+*.exe
+*.msi
+*.dmg
+

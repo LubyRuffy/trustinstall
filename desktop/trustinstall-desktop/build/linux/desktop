@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A trustinstall-desktop application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/trustinstall-desktop %u
+Terminal=false
+Type=Application
+Icon=trustinstall-desktop
+Categories=Utility;
+StartupWMClass=trustinstall-desktop
+
+ 
