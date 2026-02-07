@@ -190,17 +190,20 @@ TRUSTINSTALL_WINDOWS_INTEGRATION=1 go test ./integration -tags integration -run 
 
 ```bash
 TRUSTINSTALL_WINDOWS_SSH_INTEGRATION=1 \
-TRUSTINSTALL_WINDOWS_SSH_HOST=192.168.64.10 \
 TRUSTINSTALL_WINDOWS_SSH_USER=youruser \
 TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
 go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count=1 -v
 ```
+
+如果不设置 `TRUSTINSTALL_WINDOWS_SSH_HOST`，测试会尝试通过 `utmctl ip-address` 自动获取 IP（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
 
 可选环境变量：
 
 - `TRUSTINSTALL_WINDOWS_SSH_PORT`：默认 22
 - `TRUSTINSTALL_WINDOWS_SSH_KEY`：ssh 私钥路径（推荐）
 - `TRUSTINSTALL_WINDOWS_SSH_EXTRA_ARGS`：额外 ssh 参数（空格分隔）
+- `TRUSTINSTALL_UTM_WINDOWS_VM`：UTM VM 标识（完整名称或 UUID），用于自动获取 IP
+- `TRUSTINSTALL_UTMCTL`：utmctl 路径覆盖（默认 `/Applications/UTM.app/Contents/MacOS/utmctl`）
 
 ## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
 
@@ -217,12 +220,13 @@ go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count
 
 ```bash
 TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1 \
-TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT='http://192.168.64.10:5985/wsman' \
 TRUSTINSTALL_WINDOWS_WINRM_USER='youruser' \
 TRUSTINSTALL_WINDOWS_WINRM_PASSWORD='yourpassword' \
 TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
 go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -count=1 -v
 ```
+
+如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
 
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 

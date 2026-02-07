@@ -25,10 +25,24 @@ func TestUTMWindowsWinRMIntegration(t *testing.T) {
 
 	endpoint := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT"))
 	user := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_USER"))
+	if user == "" {
+		user = "ci"
+	}
 	password := os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_PASSWORD")
+	if password == "" {
+		password = "cipass"
+	}
 	repoDir := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_REPO_DIR"))
-	if endpoint == "" || user == "" || password == "" || repoDir == "" {
-		t.Fatalf("缺少环境变量：TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT/TRUSTINSTALL_WINDOWS_WINRM_USER/TRUSTINSTALL_WINDOWS_WINRM_PASSWORD/TRUSTINSTALL_WINDOWS_REPO_DIR")
+	if repoDir == "" {
+		t.Fatalf("缺少环境变量：TRUSTINSTALL_WINDOWS_REPO_DIR")
+	}
+
+	if endpoint == "" {
+		ip, err := discoverUTMIPv4("")
+		if err != nil {
+			t.Fatalf("自动获取 UTM IP 失败: %v", err)
+		}
+		endpoint = "http://" + ip + ":5985/wsman"
 	}
 
 	script := filepath.Join("integration", "winrm_run.py")

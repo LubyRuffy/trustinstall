@@ -27,9 +27,19 @@ func TestUTMWindowsSSHIntegration(t *testing.T) {
 
 	host := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_HOST"))
 	user := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_USER"))
+	if user == "" {
+		user = "ci"
+	}
 	repoDir := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_REPO_DIR"))
-	if host == "" || user == "" || repoDir == "" {
-		t.Fatalf("缺少环境变量：TRUSTINSTALL_WINDOWS_SSH_HOST/TRUSTINSTALL_WINDOWS_SSH_USER/TRUSTINSTALL_WINDOWS_REPO_DIR")
+	if repoDir == "" {
+		t.Fatalf("缺少环境变量：TRUSTINSTALL_WINDOWS_REPO_DIR")
+	}
+	if host == "" {
+		ip, err := discoverUTMIPv4("")
+		if err != nil {
+			t.Fatalf("自动获取 UTM IP 失败: %v", err)
+		}
+		host = ip
 	}
 
 	port := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_SSH_PORT"))
