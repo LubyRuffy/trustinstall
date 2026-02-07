@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 const defaultUTMCtl = "/Applications/UTM.app/Contents/MacOS/utmctl"
@@ -120,8 +121,23 @@ func pickUTMVMIdentifier(vms []utmVM) string {
 }
 
 func utmctlListVMs() ([]utmVM, error) {
+	// Try with --hide first (CI/headless), then without --hide.
+	if vms, err := utmctlListVMsOnce(true); len(vms) > 0 || err == nil {
+		if len(vms) > 0 {
+			return vms, nil
+		}
+		// err == nil but no VMs: still try without --hide.
+	}
+	return utmctlListVMsOnce(false)
+}
+
+func utmctlListVMsOnce(hide bool) ([]utmVM, error) {
 	utmctl := utmctlPath()
-	cmd := exec.Command(utmctl, "list", "--hide")
+	args := []string{"list"}
+	if hide {
+		args = append(args, "--hide")
+	}
+	cmd := exec.Command(utmctl, args...)
 	out, err := cmd.CombinedOutput()
 
 	// Example output:
@@ -167,14 +183,61 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM")
 	}
-	utmctl := utmctlPath()
 
-	args := []string{"exec", "--hide", id, "--cmd"}
+	// Best effort: ensure VM is started before exec.
+	_ = utmctlStart(id, true)
+
+	deadline := time.Now().Add(12 * time.Minute)
+	var lastOut string
+	var lastErr error
+	for time.Now().Before(deadline) {
+		out, err := utmctlExecOnce(id, true, cmdArgs...)
+		if err == nil {
+			return out, nil
+		}
+		lastOut, lastErr = out, err
+
+		out2, err2 := utmctlExecOnce(id, false, cmdArgs...)
+		if err2 == nil {
+			return out2, nil
+		}
+		if strings.TrimSpace(out2) != "" {
+			lastOut, lastErr = out2, err2
+		}
+
+		_ = utmctlStart(id, true)
+		time.Sleep(5 * time.Second)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown error")
+	}
+	return lastOut, fmt.Errorf("utmctl exec 超时: %w: %s", lastErr, lastOut)
+}
+
+func utmctlExecOnce(identifier string, hide bool, cmdArgs ...string) (string, error) {
+	utmctl := utmctlPath()
+	args := []string{"exec"}
+	if hide {
+		args = append(args, "--hide")
+	}
+	args = append(args, identifier, "--cmd")
 	args = append(args, cmdArgs...)
 	c := exec.Command(utmctl, args...)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("utmctl exec 失败: %w: %s", err, string(out))
+		return string(out), err
 	}
 	return string(out), nil
+}
+
+func utmctlStart(identifier string, hide bool) error {
+	utmctl := utmctlPath()
+	args := []string{"start"}
+	if hide {
+		args = append(args, "--hide")
+	}
+	args = append(args, identifier)
+	c := exec.Command(utmctl, args...)
+	_, err := c.CombinedOutput()
+	return err
 }
