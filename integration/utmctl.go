@@ -123,9 +123,6 @@ func utmctlListVMs() ([]utmVM, error) {
 	utmctl := utmctlPath()
 	cmd := exec.Command(utmctl, "list", "--hide")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
 
 	// Example output:
 	// UUID                                 Status   Name
@@ -145,6 +142,14 @@ func utmctlListVMs() ([]utmVM, error) {
 			continue
 		}
 		vms = append(vms, utmVM{UUID: strings.TrimSpace(m[1]), Name: strings.TrimSpace(m[2])})
+	}
+	// utmctl 在某些场景（例如 SSH session、未登录）会返回非 0 退出码，但仍可能输出列表。
+	// 这里优先信任解析结果，只要能解析出 VM 就忽略 err。
+	if len(vms) > 0 {
+		return vms, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	return vms, nil
 }
