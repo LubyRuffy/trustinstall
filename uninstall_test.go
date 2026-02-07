@@ -15,6 +15,14 @@ type batchUninstallSystem struct {
 	lastN      int
 }
 
+type noDeleteSystem struct{ *fakeSystem }
+
+func (s *noDeleteSystem) UninstallCert(cert *x509.Certificate) error {
+	s.fakeSystem.uninstallCalls = append(s.fakeSystem.uninstallCalls, sha1Hex(cert))
+	// Keep certsByCN unchanged to simulate a "no-op delete".
+	return nil
+}
+
 func (s *batchUninstallSystem) EnsureUninstallCerts(certs []*x509.Certificate) error {
 	s.batchCalls++
 	s.lastN = len(certs)
@@ -110,5 +118,26 @@ func TestUninstallCAWithSys_DeleteLocalFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(keyPath); !os.IsNotExist(err) {
 		t.Fatalf("key should be removed, stat err=%v", err)
+	}
+}
+
+func TestUninstallByCommonName_ReturnsActualDeletedCount(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 2, 7, 10, 0, 0, 0, time.UTC)
+	wantCert, _, _, _, err := generateSelfSignedCA("my-ca", now, rand.Reader)
+	if err != nil {
+		t.Fatalf("generateSelfSignedCA err=%v", err)
+	}
+
+	sys := &noDeleteSystem{fakeSystem: newFakeSystem()}
+	sys.certsByCN["my-ca"] = []*x509.Certificate{wantCert}
+
+	n, err := uninstallByCommonName("my-ca", sys)
+	if err != nil {
+		t.Fatalf("uninstall err=%v", err)
+	}
+	if n != 0 {
+		t.Fatalf("n=%d, want 0", n)
 	}
 }
