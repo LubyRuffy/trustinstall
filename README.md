@@ -139,6 +139,16 @@ wails3 dev
 
 更多说明见：`desktop/trustinstall-desktop/README.md`。
 
+## Docker 集成测试（Linux 系统信任库）
+
+本仓库包含一个“调用本地 Docker”的集成测试，用于在 Linux 容器里真实验证 `InstallCA/UninstallCA` 的系统信任库流程。
+
+运行方式（宿主机需要安装并启动 Docker）：
+
+```bash
+TRUSTINSTALL_INTEGRATION=1 go test ./... -tags integration -run TestDockerLinuxIntegration -count=1
+```
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
