@@ -186,6 +186,7 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 
 	// Best effort: ensure VM is started before exec.
 	_ = utmctlStart(id, true)
+	_ = utmctlStart(id, false)
 
 	deadline := time.Now().Add(12 * time.Minute)
 	var lastOut string
@@ -206,6 +207,7 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 		}
 
 		_ = utmctlStart(id, true)
+		_ = utmctlStart(id, false)
 		time.Sleep(5 * time.Second)
 	}
 	if lastErr == nil {
