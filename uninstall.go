@@ -24,31 +24,76 @@ func uninstallByCommonName(commonName string, sys systemOps) (int, error) {
 		return 0, fmt.Errorf("查询系统证书失败: %w", err)
 	}
 
-	var targets []*x509.Certificate
+	type target struct {
+		id   string
+		cert *x509.Certificate
+	}
+	var targets []target
 	for _, c := range certs {
-		if c.Cert != nil {
-			targets = append(targets, c.Cert)
+		if c.Cert == nil {
+			continue
 		}
+		id := strings.ToUpper(strings.TrimSpace(c.SHA1))
+		if id == "" {
+			id = strings.ToUpper(sha1Hex(c.Cert))
+		}
+		targets = append(targets, target{id: id, cert: c.Cert})
 	}
 	if len(targets) == 0 {
 		return 0, nil
 	}
 
+	before := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		if t.id != "" {
+			before[t.id] = true
+		}
+	}
+
 	if bat, ok := sys.(interface {
 		EnsureUninstallCerts(certs []*x509.Certificate) error
 	}); ok {
-		if err := bat.EnsureUninstallCerts(targets); err != nil {
-			return len(targets), err
+		var ts []*x509.Certificate
+		for _, t := range targets {
+			ts = append(ts, t.cert)
 		}
-		return len(targets), nil
+		if err := bat.EnsureUninstallCerts(ts); err != nil {
+			return 0, err
+		}
+	} else {
+		for _, t := range targets {
+			if err := sys.UninstallCert(t.cert); err != nil {
+				return 0, wrapCmdError("删除系统证书失败", err)
+			}
+		}
 	}
 
-	for _, c := range targets {
-		if err := sys.UninstallCert(c); err != nil {
-			return len(targets), wrapCmdError("删除系统证书失败", err)
+	afterCerts, err := sys.FindCertificatesByCommonName(cn)
+	if err != nil {
+		// 删除已执行，但无法重新查询，保守返回“尝试删除的数量”。
+		return len(before), nil
+	}
+	after := make(map[string]bool, len(afterCerts))
+	for _, c := range afterCerts {
+		if c.Cert == nil {
+			continue
+		}
+		id := strings.ToUpper(strings.TrimSpace(c.SHA1))
+		if id == "" {
+			id = strings.ToUpper(sha1Hex(c.Cert))
+		}
+		if id != "" {
+			after[id] = true
 		}
 	}
-	return len(targets), nil
+
+	deleted := 0
+	for id := range before {
+		if !after[id] {
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func uninstallCAWithSys(dir, fileBaseName, commonName string, deleteLocal bool, sys systemOps, remove func(string) error) (UninstallCAResult, error) {

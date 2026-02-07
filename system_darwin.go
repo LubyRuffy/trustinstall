@@ -252,18 +252,49 @@ func (s *darwinSystem) UninstallCert(cert *x509.Certificate) error {
 		return fmt.Errorf("证书为空")
 	}
 
-	if err := truststore.Uninstall(cert); err == nil {
-		return nil
+	cn := strings.TrimSpace(cert.Subject.CommonName)
+	want := strings.ToUpper(strings.TrimSpace(sha1Hex(cert)))
+	if want == "" {
+		return fmt.Errorf("证书 SHA1 为空")
 	}
 
-	// fallback: 尝试直接按 hash 删除（某些情况下 remove-trusted-cert 可能找不到）。
-	sha1 := sha1Hex(cert)
-	cmd := s.execCmd("sudo", "security", "delete-certificate", "-Z", sha1, "/Library/Keychains/System.keychain")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return truststore.NewCmdError(err, cmd, out)
+	// 某些情况下 System.keychain 里可能存在重复项（甚至相同 SHA1 的多份），`security delete-certificate`
+	// 可能需要多次调用才能删干净。这里做一个“删到查不到为止”的小循环，避免用户需要重复执行卸载命令。
+	for i := 0; i < 6; i++ {
+		_ = truststore.Uninstall(cert) // ignore error; fallback below handles the heavy lifting
+
+		cmd := s.execCmd("sudo", "security", "delete-certificate", "-Z", want, "/Library/Keychains/System.keychain")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			// 如果本来就不存在，也视为成功。
+			if bytes.Contains(bytes.ToLower(out), []byte("could not be found")) ||
+				bytes.Contains(bytes.ToLower(out), []byte("not be found")) {
+				return nil
+			}
+			return truststore.NewCmdError(err, cmd, out)
+		}
+
+		// verify
+		if cn != "" {
+			sysCerts, err := s.FindCertificatesByCommonName(cn)
+			if err == nil {
+				still := false
+				for _, c := range sysCerts {
+					if strings.EqualFold(strings.TrimSpace(c.SHA1), want) {
+						still = true
+						break
+					}
+				}
+				if !still {
+					return nil
+				}
+			}
+		}
+
+		time.Sleep(150 * time.Millisecond)
 	}
-	return nil
+
+	return fmt.Errorf("删除系统证书失败：重试多次后仍能查询到该证书（CN=%q, SHA1=%s）", cn, want)
 }
 
 func (s *darwinSystem) readAdminTrustSettings() (map[string]interface{}, error) {
