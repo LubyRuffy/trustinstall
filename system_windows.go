@@ -25,10 +25,11 @@ func (s *windowsSystem) FindCertificatesByCommonName(commonName string) ([]syste
 		return nil, fmt.Errorf("commonName 不能为空")
 	}
 
-	// Use PowerShell to enumerate LocalMachine Root store and include raw bytes.
-	// This keeps implementation self-contained and avoids custom syscall bindings here.
+	// Use PowerShell to enumerate CurrentUser Root store and include raw bytes.
+	// truststore on Windows uses CertOpenSystemStoreW("ROOT") which maps to the current user store,
+	// so we scan the same scope to keep IsCertTrusted/Find consistent without requiring admin.
 	script := `$ErrorActionPreference='Stop'; ` +
-		`Get-ChildItem -Path Cert:\LocalMachine\Root | ` +
+		`Get-ChildItem -Path Cert:\CurrentUser\Root | ` +
 		`ForEach-Object { ` +
 		`$cn=''; if ($_.Subject -match 'CN=([^,]+)') { $cn=$matches[1] }; ` +
 		`[PSCustomObject]@{Thumbprint=$_.Thumbprint; CommonName=$cn; RawBase64=[Convert]::ToBase64String($_.RawData)} ` +

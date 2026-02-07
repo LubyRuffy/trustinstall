@@ -176,6 +176,32 @@ TRUSTINSTALL_WINDOWS_INTEGRATION=1 go test ./integration -tags integration -run 
 - `TRUSTINSTALL_DOCKUR_WINDOWS_RAM`：默认 `6G`
 - `TRUSTINSTALL_DOCKUR_WINDOWS_CPU`：默认 `4`
 
+## 集成测试（UTM Windows via SSH，适用于 Apple Silicon）
+
+在 Apple Silicon 上，更推荐用 UTM 跑一个 Windows VM（Windows ARM64），然后通过 SSH 远程触发 VM 内执行 `go test` 完成集成测试。
+
+前置条件：
+
+- Windows VM 内安装并启用 OpenSSH Server（确保 macOS 能 `ssh user@host` 连接）
+- Windows VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
+- Windows VM 内有本仓库代码（例如 `C:\src\trustinstall`）
+
+运行（在 macOS 上）：
+
+```bash
+TRUSTINSTALL_WINDOWS_SSH_INTEGRATION=1 \
+TRUSTINSTALL_WINDOWS_SSH_HOST=192.168.64.10 \
+TRUSTINSTALL_WINDOWS_SSH_USER=youruser \
+TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
+go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count=1 -v
+```
+
+可选环境变量：
+
+- `TRUSTINSTALL_WINDOWS_SSH_PORT`：默认 22
+- `TRUSTINSTALL_WINDOWS_SSH_KEY`：ssh 私钥路径（推荐）
+- `TRUSTINSTALL_WINDOWS_SSH_EXTRA_ARGS`：额外 ssh 参数（空格分隔）
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
