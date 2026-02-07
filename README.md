@@ -64,7 +64,11 @@ func (c *Client) InstallCA() error
 
 #### Linux/Windows 说明
 
-Linux/Windows 下同样支持 `InstallCA/UninstallCA`（底层依赖 `github.com/smallstep/truststore` 写入系统信任库，通常需要管理员权限）。
+Linux 下支持 `InstallCA/UninstallCA`（底层依赖 `github.com/smallstep/truststore` 写入系统信任库，通常需要管理员权限）。
+
+Windows 下同样支持 `InstallCA/UninstallCA`，但默认写入 **系统** 根证书存储（`Cert:\LocalMachine\Root`），通常需要管理员权限。
+
+说明：部分 Windows 环境会禁用/不支持写入用户根证书存储（`Cert:\CurrentUser\Root`，可能出现 `ERROR_NOT_SUPPORTED`），因此本库在 Windows 上选择写入 `LocalMachine\Root` 以保证一致性。
 
 ### Client.LeafCertificate
 
@@ -218,8 +222,8 @@ CI 约定：
 前置条件：
 
 - Windows VM 已启用 WinRM（HTTP 5985）并允许 NTLM 认证
-- Windows VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
-- Windows VM 内有本仓库代码（例如 `C:\src\trustinstall`）
+- Windows VM 能访问宿主机的 UTM 网段地址（默认会启动一个临时 HTTP 服务，用于让 VM 拉取本仓库 zip；必要时可设置 `TRUSTINSTALL_WINDOWS_HOST_IP`）
+- Windows VM 内如果未安装 Go，测试会尝试从 `go.dev` 下载并安装到 `C:\go`（需能访问外网）
 - macOS 需要 `python3`，并安装 `pywinrm`（包名：`pywinrm`）
 
 运行（在 macOS 上）：
@@ -228,9 +232,13 @@ CI 约定：
 TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1 \
 TRUSTINSTALL_WINDOWS_WINRM_USER='youruser' \
 TRUSTINSTALL_WINDOWS_WINRM_PASSWORD='yourpassword' \
-TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
 go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -count=1 -v
 ```
+
+可选环境变量：
+
+- `TRUSTINSTALL_WINDOWS_REPO_DIR`：如果 Windows VM 里已存在本仓库代码，可指定路径（优先使用该路径，不再走 zip 分发）
+- `TRUSTINSTALL_WINDOWS_HOST_IP`：宿主机在 UTM 网段的 IP（自动识别失败时手动指定，例如 `192.168.64.1`）
 
 如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（VM 标识优先来自 `TRUSTINSTALL_UTM_WINDOWS_VM`/`TRUSTINSTALL_UTM_VM`，否则会按上文 CI 约定自动选择）。
 
