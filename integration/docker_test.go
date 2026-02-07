@@ -38,7 +38,7 @@ func TestDockerLinuxIntegration(t *testing.T) {
 		// In some images, `bash -l` may reset PATH and hide /usr/local/go/bin. Make it explicit.
 		`export PATH="/go/bin:/usr/local/go/bin:$PATH"`,
 		// Base image already includes ca-certificates tooling; avoid apt-get to keep the test resilient to network/repo issues.
-		`go test ./... -tags linux_integration -run TestLinuxInstallUninstall_SystemTrust -count=1`,
+		`go test ./... -tags linux_integration -run TestLinuxInstallUninstall_SystemTrust -count=1 -v`,
 	}, " && ")
 
 	args := []string{
@@ -49,12 +49,22 @@ func TestDockerLinuxIntegration(t *testing.T) {
 		"bash", "-c", cmdStr,
 	}
 
-	var out bytes.Buffer
 	c := exec.Command("docker", args...)
-	c.Stdout = &out
-	c.Stderr = &out
+	if testing.Verbose() {
+		// 透传容器内输出，便于确认安装/信任/卸载流程确实发生。
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+	} else {
+		var out bytes.Buffer
+		c.Stdout = &out
+		c.Stderr = &out
+		if err := c.Run(); err != nil {
+			t.Fatalf("docker run failed: %v\n%s", err, out.String())
+		}
+		return
+	}
 	if err := c.Run(); err != nil {
-		t.Fatalf("docker run failed: %v\n%s", err, out.String())
+		t.Fatalf("docker run failed: %v", err)
 	}
 }
 
