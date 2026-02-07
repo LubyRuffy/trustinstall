@@ -195,7 +195,7 @@ TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
 go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count=1 -v
 ```
 
-如果不设置 `TRUSTINSTALL_WINDOWS_SSH_HOST`，测试会尝试通过 `utmctl ip-address` 自动获取 IP（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
+如果不设置 `TRUSTINSTALL_WINDOWS_SSH_HOST`，测试会尝试通过 `utmctl ip-address` 自动获取 IP（VM 标识优先来自 `TRUSTINSTALL_UTM_WINDOWS_VM`/`TRUSTINSTALL_UTM_VM`，否则会按下文 CI 约定自动选择）。
 
 可选环境变量：
 
@@ -207,7 +207,8 @@ go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count
 
 CI 约定：
 
-- 若未设置 `TRUSTINSTALL_UTM_WINDOWS_VM`，会优先从 `utmctl list` 里自动选择名称以 `ci-os` 开头的 VM。
+- 若未设置 `TRUSTINSTALL_UTM_WINDOWS_VM`，会优先从 `utmctl list` 里自动选择名称以 `ci-os` 或 `ci-` 开头的 VM，并优先选择名称包含 Windows 的 VM（例如 `ci-Windows`）。
+- 若 `utmctl list` 在 SSH/无登录场景不可用，会尝试从 UTM 默认 Documents 目录中识别常用名称（例如 `~/Library/Containers/com.utmapp.UTM/Data/Documents/ci-Windows.utm`）。
 - 若宿主机缺少 `ssh` 或 `pywinrm`，测试会自动 fallback 到 `utmctl exec` 在 guest 内执行（并做 best-effort 的 WinRM 配置）。
 
 ## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
@@ -231,7 +232,7 @@ TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
 go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -count=1 -v
 ```
 
-如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
+如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（VM 标识优先来自 `TRUSTINSTALL_UTM_WINDOWS_VM`/`TRUSTINSTALL_UTM_VM`，否则会按上文 CI 约定自动选择）。
 
 默认启用规则（CI）：
 
