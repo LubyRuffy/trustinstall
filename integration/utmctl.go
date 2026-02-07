@@ -13,7 +13,8 @@ import (
 )
 
 const defaultUTMCtl = "/Applications/UTM.app/Contents/MacOS/utmctl"
-const defaultCIPrefix = "ci-os"
+const defaultCIPrefixOS = "ci-os"
+const defaultCIPrefixCI = "ci-"
 
 func utmctlPath() string {
 	if p := strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTMCTL")); p != "" {
@@ -41,7 +42,7 @@ func discoverUTMIPv4(identifier string) (string, error) {
 		id = pickUTMVMIdentifier(vms)
 	}
 	if id == "" {
-		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 开头的 VM", defaultCIPrefix)
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 或 %q 开头的 Windows VM（例如 ci-Windows）", defaultCIPrefixOS, defaultCIPrefixCI)
 	}
 
 	utmctl := utmctlPath()
@@ -81,8 +82,17 @@ func pickUTMVMIdentifier(vms []utmVM) string {
 
 	var ci []utmVM
 	for _, vm := range vms {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(vm.Name)), defaultCIPrefix) {
+		name := strings.ToLower(strings.TrimSpace(vm.Name))
+		if strings.HasPrefix(name, defaultCIPrefixOS) || strings.HasPrefix(name, defaultCIPrefixCI) {
 			ci = append(ci, vm)
+		}
+	}
+
+	// Prefer Windows VM in CI by name.
+	for _, vm := range ci {
+		name := strings.ToLower(strings.TrimSpace(vm.Name))
+		if strings.Contains(name, "windows") || strings.Contains(name, "win") {
+			return vm.Name
 		}
 	}
 	if len(ci) == 1 {
