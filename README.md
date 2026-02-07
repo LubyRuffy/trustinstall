@@ -202,6 +202,28 @@ go test ./integration -tags integration -run TestUTMWindowsSSHIntegration -count
 - `TRUSTINSTALL_WINDOWS_SSH_KEY`：ssh 私钥路径（推荐）
 - `TRUSTINSTALL_WINDOWS_SSH_EXTRA_ARGS`：额外 ssh 参数（空格分隔）
 
+## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
+
+如果你更倾向用 WinRM，也可以通过 NTLM 在 5985 端口执行远程 PowerShell 来跑集成测试。
+
+前置条件：
+
+- Windows VM 已启用 WinRM（HTTP 5985）并允许 NTLM 认证
+- Windows VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
+- Windows VM 内有本仓库代码（例如 `C:\src\trustinstall`）
+- macOS 需要 `python3`，并安装 `pywinrm`（包名：`pywinrm`）
+
+运行（在 macOS 上）：
+
+```bash
+TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1 \
+TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT='http://192.168.64.10:5985/wsman' \
+TRUSTINSTALL_WINDOWS_WINRM_USER='youruser' \
+TRUSTINSTALL_WINDOWS_WINRM_PASSWORD='yourpassword' \
+TRUSTINSTALL_WINDOWS_REPO_DIR='C:\\src\\trustinstall' \
+go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -count=1 -v
+```
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
