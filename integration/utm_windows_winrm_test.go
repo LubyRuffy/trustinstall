@@ -15,8 +15,17 @@ func TestUTMWindowsWinRMIntegration(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("宿主机为 Windows 时跳过")
 	}
-	if os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION") == "" {
-		t.Skip("未设置 TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1，跳过 UTM Windows WinRM 集成测试")
+
+	// 默认在 CI 机器上开启（你的 CI 服务器命名以 ci- 开头，且使用 UTM）。
+	// 可通过显式设置 0/false/no/off 关闭。
+	if v := os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION"); v != "" {
+		if isFalseyEnv(v) {
+			t.Skip("TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=false，跳过")
+		}
+	} else {
+		if os.Getenv("CI") == "" && !isCIHostByName() {
+			t.Skip("非 CI 环境且未设置 TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=1，跳过 UTM Windows WinRM 集成测试")
+		}
 	}
 
 	endpoint := strings.TrimSpace(os.Getenv("TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT"))

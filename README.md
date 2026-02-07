@@ -233,6 +233,11 @@ go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -cou
 
 如果不设置 `TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT`，测试会尝试通过 `utmctl ip-address` 自动获取 IP 并拼出 `http://<ip>:5985/wsman`（需要设置 `TRUSTINSTALL_UTM_WINDOWS_VM` 为 VM 完整名称或 UUID）。
 
+默认启用规则（CI）：
+
+- 在 hostname 以 `ci` 或 `ci-` 开头、或环境变量 `CI` 存在时，即使不设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION` 也会默认运行。
+- 如需关闭：设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=0`（或 `false/no/off`）。
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
