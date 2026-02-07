@@ -215,6 +215,42 @@ CI 约定：
 - 若 `utmctl list` 在 SSH/无登录场景不可用，会尝试从 UTM 默认 Documents 目录中识别常用名称（例如 `~/Library/Containers/com.utmapp.UTM/Data/Documents/ci-Windows.utm`）。
 - 若宿主机缺少 `ssh` 或 `pywinrm`，测试会自动 fallback 到 `utmctl exec` 在 guest 内执行（并做 best-effort 的 WinRM 配置）。
 
+## 集成测试（UTM Linux via SSH/utmctl exec，适用于 Apple Silicon）
+
+当你希望在 UTM 里的 Linux VM（例如 `ci-Linux`）上跑 `linux_integration`（需要 root 修改系统信任库）时，可通过宿主机触发 VM 内执行 `go test` 完成集成测试。
+
+前置条件：
+
+- Linux VM 内已安装 Go（需满足本仓库 `go.mod` 的 Go 版本）
+- Linux VM 内有本仓库代码（例如 `/home/ci/src/trustinstall`）
+- `linux_integration` 需要 root：建议为测试用户配置免密 sudo（`sudo -n true` 可通过）
+
+运行（在 macOS 上）：
+
+```bash
+TRUSTINSTALL_LINUX_INTEGRATION=1 \
+TRUSTINSTALL_LINUX_REPO_DIR=/home/ci/src/trustinstall \
+go test ./integration -tags integration -run TestUTMLinuxIntegration -count=1 -v
+```
+
+如果不设置 `TRUSTINSTALL_LINUX_SSH_HOST`，测试会尝试通过 `utmctl ip-address` 自动获取 IP（VM 标识优先来自 `TRUSTINSTALL_UTM_LINUX_VM`/`TRUSTINSTALL_UTM_VM`，否则会按 CI 约定自动选择）。
+
+可选环境变量：
+
+- `TRUSTINSTALL_LINUX_SSH_HOST`：Linux VM IP
+- `TRUSTINSTALL_LINUX_SSH_USER`：默认 `ci`
+- `TRUSTINSTALL_LINUX_SSH_PORT`：默认 22
+- `TRUSTINSTALL_LINUX_SSH_KEY`：ssh 私钥路径（推荐）
+- `TRUSTINSTALL_LINUX_SSH_EXTRA_ARGS`：额外 ssh 参数（空格分隔）
+- `TRUSTINSTALL_UTM_LINUX_VM`：UTM VM 标识（完整名称或 UUID），用于自动获取 IP
+- `TRUSTINSTALL_UTMCTL`：utmctl 路径覆盖（默认 `/Applications/UTM.app/Contents/MacOS/utmctl`）
+
+CI 约定：
+
+- 若未设置 `TRUSTINSTALL_UTM_LINUX_VM`，会优先从 `utmctl list` 里自动选择名称以 `ci-os` 或 `ci-` 开头的 VM，并优先选择名称包含 Linux/Ubuntu/Debian 的 VM（例如 `ci-Linux`）。
+- 若 `utmctl list` 在 SSH/无登录场景不可用，会尝试从 UTM 默认 Documents 目录中识别常用名称（例如 `~/Library/Containers/com.utmapp.UTM/Data/Documents/ci-Linux.utm`）。
+- 若宿主机缺少 `ssh`，测试会自动 fallback 到 `utmctl exec` 在 guest 内执行。
+
 ## 集成测试（UTM Windows via WinRM(HTTP 5985 + NTLM)，适用于 Apple Silicon）
 
 如果你更倾向用 WinRM，也可以通过 NTLM 在 5985 端口执行远程 PowerShell 来跑集成测试。

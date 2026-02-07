@@ -24,6 +24,21 @@ func isUTMCtlAutomationDenied(output string) bool {
 	return false
 }
 
+func isUTMCtlEventError(output string) bool {
+	s := strings.ToLower(output)
+	// utmctl may print an AppleEvent error but still exit 0, which would otherwise be treated as success.
+	// Example:
+	// Error from event: The operation couldn’t be completed. (OSStatus error -10004.)
+	if strings.Contains(s, "error from event:") && strings.Contains(s, "osstatus error") {
+		return true
+	}
+	// Be conservative: any OSStatus error line indicates the command didn't actually execute.
+	if strings.Contains(s, "osstatus error -") {
+		return true
+	}
+	return false
+}
+
 func shellQuote(s string) string {
 	// Safe for zsh/bash: ' -> '"'"'
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
