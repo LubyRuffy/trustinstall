@@ -25,11 +25,11 @@ func (s *windowsSystem) FindCertificatesByCommonName(commonName string) ([]syste
 		return nil, fmt.Errorf("commonName 不能为空")
 	}
 
-	// Use PowerShell to enumerate CurrentUser Root store and include raw bytes.
-	// truststore on Windows uses CertOpenSystemStoreW("ROOT") which maps to the current user store,
-	// so we scan the same scope to keep IsCertTrusted/Find consistent without requiring admin.
+	// Use PowerShell to enumerate LocalMachine Root store and include raw bytes.
+	// NOTE: Some Windows environments disable the per-user ROOT store (certutil -addstore -user root
+	// returns ERROR_NOT_SUPPORTED). We use the system ROOT store (LocalMachine) which may require admin.
 	script := `$ErrorActionPreference='Stop'; ` +
-		`Get-ChildItem -Path Cert:\CurrentUser\Root | ` +
+		`Get-ChildItem -Path Cert:\LocalMachine\Root | ` +
 		`ForEach-Object { ` +
 		`$cn=''; if ($_.Subject -match 'CN=([^,]+)') { $cn=$matches[1] }; ` +
 		`[PSCustomObject]@{Thumbprint=$_.Thumbprint; CommonName=$cn; RawBase64=[Convert]::ToBase64String($_.RawData)} ` +
@@ -96,7 +96,20 @@ func (s *windowsSystem) IsCertTrusted(cert *x509.Certificate) (bool, error) {
 }
 
 func (s *windowsSystem) InstallCertFile(certFile string) error {
-	return truststore.InstallFile(certFile)
+	if strings.TrimSpace(certFile) == "" {
+		return fmt.Errorf("certFile 不能为空")
+	}
+	// Use Import-Certificate to install into LocalMachine Root store.
+	// This typically requires an elevated token.
+	q := "'" + strings.ReplaceAll(certFile, "'", "''") + "'"
+	script := `$ErrorActionPreference='Stop'; ` +
+		`Import-Certificate -FilePath ` + q + ` -CertStoreLocation Cert:\LocalMachine\Root | Out-Null`
+	cmd := s.execCmd("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return truststore.NewCmdError(err, cmd, out)
+	}
+	return nil
 }
 
 func (s *windowsSystem) TrustCert(cert *x509.Certificate) error {
@@ -111,5 +124,18 @@ func (s *windowsSystem) UninstallCert(cert *x509.Certificate) error {
 	if cert == nil {
 		return fmt.Errorf("证书为空")
 	}
-	return truststore.Uninstall(cert)
+	thumb := strings.TrimSpace(sha1Hex(cert))
+	if thumb == "" {
+		return fmt.Errorf("证书 Thumbprint 为空")
+	}
+	// Best-effort idempotent uninstall: no error if not found.
+	script := `$ErrorActionPreference='Stop'; ` +
+		`$p='Cert:\LocalMachine\Root\` + thumb + `'; ` +
+		`if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }`
+	cmd := s.execCmd("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return truststore.NewCmdError(err, cmd, out)
+	}
+	return nil
 }
