@@ -149,6 +149,33 @@ wails3 dev
 TRUSTINSTALL_INTEGRATION=1 go test ./... -tags integration -run TestDockerLinuxIntegration -count=1
 ```
 
+## Docker 集成测试（Windows via dockur/windows）
+
+使用 [`dockur/windows`](https://github.com/dockur/windows) 在 Linux + KVM 上启动 Windows VM，在 VM 内运行 `go test` 以验证：
+
+- `InstallCA` 安装成功
+- `IsCertTrusted` 为 true（可信成功）
+- `UninstallCA` 卸载成功并能再次扫描为 0
+
+前置条件：
+
+- 宿主机必须是 Linux
+- 需要 KVM（`/dev/kvm` 存在）
+- 需要 Docker，并允许容器访问 `/dev/kvm` 与 `/dev/net/tun`
+
+运行：
+
+```bash
+TRUSTINSTALL_WINDOWS_INTEGRATION=1 go test ./integration -tags integration -run TestDockerWindowsDockurIntegration -count=1 -v
+```
+
+可选环境变量（调参）：
+
+- `TRUSTINSTALL_DOCKUR_WINDOWS_IMAGE`：默认 `dockurr/windows:latest`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_VERSION`：默认 `11`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_RAM`：默认 `6G`
+- `TRUSTINSTALL_DOCKUR_WINDOWS_CPU`：默认 `4`
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
