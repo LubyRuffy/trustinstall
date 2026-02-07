@@ -62,6 +62,10 @@ func (c *Client) InstallCA() error
 - 有 TTY：直接在当前进程执行 `sudo security ...`
 - 无 TTY：自动弹出一个新的 Terminal 窗口执行需要提权的命令，让用户在该窗口里输入管理员密码；当前调用会轮询等待安装/信任生效
 
+#### Linux/Windows 说明
+
+Linux/Windows 下同样支持 `InstallCA/UninstallCA`（底层依赖 `github.com/smallstep/truststore` 写入系统信任库，通常需要管理员权限）。
+
 ### Client.LeafCertificate
 
 ```go
