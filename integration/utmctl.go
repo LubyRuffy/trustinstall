@@ -3,10 +3,9 @@
 package integration
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -29,6 +28,32 @@ type utmVM struct {
 	Name string
 }
 
+func guessUTMWindowsVMIdentifierFromDisk() string {
+	// If utmctl list is unavailable (TCC/SSH/no-login), we still can often "stat" known VM bundles
+	// without enumerating the directory.
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	docsDir := filepath.Join(home, "Library", "Containers", "com.utmapp.UTM", "Data", "Documents")
+
+	// Common CI names (prefer exact casing used by your fleet).
+	candidates := []string{
+		"ci-Windows",
+		"ci-windows",
+		"ci-os-windows",
+		"ci-os-Windows",
+	}
+
+	for _, name := range candidates {
+		p := filepath.Join(docsDir, name+".utm")
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return name
+		}
+	}
+	return ""
+}
+
 func discoverUTMIPv4(identifier string) (string, error) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
@@ -42,6 +67,9 @@ func discoverUTMIPv4(identifier string) (string, error) {
 		vms, _ := utmctlListVMs()
 		id = pickUTMVMIdentifier(vms)
 	}
+	if id == "" {
+		id = guessUTMWindowsVMIdentifierFromDisk()
+	}
 	// If utmctl list is unavailable (e.g. SSH session / no login), fall back to scanning.
 	if id == "" {
 		if ip, err := discoverWindowsVMIPv4ByScan(5985); err == nil {
@@ -50,20 +78,16 @@ func discoverUTMIPv4(identifier string) (string, error) {
 		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM（或 TRUSTINSTALL_UTM_VM）为 VM 完整名称或 UUID；或确保存在一个以 %q 或 %q 开头的 Windows VM（例如 ci-Windows）；若在无登录/SSH 场景 utmctl 不可用，可设置 TRUSTINSTALL_WINDOWS_DISCOVERY_CIDRS 或手动设置 TRUSTINSTALL_WINDOWS_WINRM_ENDPOINT", defaultCIPrefixOS, defaultCIPrefixCI)
 	}
 
-	utmctl := utmctlPath()
-	cmd := exec.Command(utmctl, "ip-address", "--hide", id)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
+	out, err := runUTMCtl([]string{"ip-address", "--hide", id}, 30*time.Second)
+	if err != nil {
 		// If utmctl cannot talk to the UI session, fall back to scanning.
 		if ip, scanErr := discoverWindowsVMIPv4ByScan(5985); scanErr == nil {
 			return ip, nil
 		}
-		return "", fmt.Errorf("utmctl ip-address 失败: %w: %s", err, out.String())
+		return "", fmt.Errorf("utmctl ip-address 失败: %w: %s", err, string(out))
 	}
 
-	lines := strings.Split(out.String(), "\n")
+	lines := strings.Split(string(out), "\n")
 	for _, ln := range lines {
 		s := strings.TrimSpace(ln)
 		if s == "" {
@@ -132,13 +156,11 @@ func utmctlListVMs() ([]utmVM, error) {
 }
 
 func utmctlListVMsOnce(hide bool) ([]utmVM, error) {
-	utmctl := utmctlPath()
 	args := []string{"list"}
 	if hide {
 		args = append(args, "--hide")
 	}
-	cmd := exec.Command(utmctl, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := runUTMCtl(args, 20*time.Second)
 
 	// Example output:
 	// UUID                                 Status   Name
@@ -179,6 +201,9 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 			vms, _ := utmctlListVMs()
 			id = pickUTMVMIdentifier(vms)
 		}
+		if id == "" {
+			id = guessUTMWindowsVMIdentifierFromDisk()
+		}
 	}
 	if id == "" {
 		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_WINDOWS_VM")
@@ -217,15 +242,13 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 }
 
 func utmctlExecOnce(identifier string, hide bool, cmdArgs ...string) (string, error) {
-	utmctl := utmctlPath()
 	args := []string{"exec"}
 	if hide {
 		args = append(args, "--hide")
 	}
 	args = append(args, identifier, "--cmd")
 	args = append(args, cmdArgs...)
-	c := exec.Command(utmctl, args...)
-	out, err := c.CombinedOutput()
+	out, err := runUTMCtl(args, 12*time.Minute)
 	if err != nil {
 		return string(out), err
 	}
@@ -233,13 +256,11 @@ func utmctlExecOnce(identifier string, hide bool, cmdArgs ...string) (string, er
 }
 
 func utmctlStart(identifier string, hide bool) error {
-	utmctl := utmctlPath()
 	args := []string{"start"}
 	if hide {
 		args = append(args, "--hide")
 	}
 	args = append(args, identifier)
-	c := exec.Command(utmctl, args...)
-	_, err := c.CombinedOutput()
+	_, err := runUTMCtl(args, 2*time.Minute)
 	return err
 }
