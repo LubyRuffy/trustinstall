@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -55,49 +54,78 @@ func TestUTMWindowsWinRMIntegration(t *testing.T) {
 		}
 	}
 
-	// Prefer WinRM via pywinrm; if missing/unavailable in CI, fall back to utmctl exec.
+	// Prefer WinRM; if unavailable in CI, fall back to utmctl exec.
 	if endpoint != "" {
-		if _, err := exec.LookPath("python3"); err == nil {
-			_, thisFile, _, _ := runtime.Caller(0)
-			scriptPath := filepath.Join(filepath.Dir(thisFile), "winrm_run.py")
+		var repoZipURL string
+		var stopServer func()
+		if repoDir == "" {
+			u, stop, err := startRepoZipServerForWindows(endpoint)
+			if err != nil {
+				t.Fatalf("启动 repo zip server 失败: %v", err)
+			}
+			repoZipURL = u
+			stopServer = stop
+			defer stopServer()
+			if testing.Verbose() {
+				t.Logf("repo zip url=%s", repoZipURL)
+			}
+		}
 
-			var repoZipURL string
-			var stopServer func()
-			if repoDir == "" {
-				u, stop, err := startRepoZipServerForWindows(endpoint)
-				if err != nil {
-					t.Fatalf("启动 repo zip server 失败: %v", err)
-				}
-				repoZipURL = u
-				stopServer = stop
-				defer stopServer()
-				if testing.Verbose() {
-					t.Logf("repo zip url=%s", repoZipURL)
-				}
+		ps := strings.Join([]string{
+			`$ErrorActionPreference = 'Stop'`,
+			`$ProgressPreference = 'SilentlyContinue'`,
+			`$env:GOPROXY = 'https://proxy.golang.com.cn,https://goproxy.cn,https://goproxy.io,direct'`,
+			`$env:GOSUMDB = 'sum.golang.google.cn'`,
+			`$env:PATH = "C:\go\bin;" + $env:PATH`,
+			// Ensure Go exists; download matching arch zip if missing.
+			`if (-not (Get-Command go -ErrorAction SilentlyContinue)) {`,
+			`  $arch = $env:PROCESSOR_ARCHITECTURE`,
+			`  $goarch = 'amd64'`,
+			`  if ($arch -match 'ARM64') { $goarch = 'arm64' }`,
+			`  $ver = '1.25.5'`,
+			`  $zip = "go$ver.windows-$goarch.zip"`,
+			`  $url = "https://go.dev/dl/$zip"`,
+			`  $out = "C:\Temp\$zip"`,
+			`  New-Item -ItemType Directory -Force -Path C:\Temp | Out-Null`,
+			`  if (Get-Command curl.exe -ErrorAction SilentlyContinue) {`,
+			`    curl.exe -L $url -o $out --max-time 600`,
+			`  } else {`,
+			`    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out`,
+			`  }`,
+			`  if (Test-Path C:\go) { Remove-Item -Recurse -Force C:\go }`,
+			`  Expand-Archive -Force -Path $out -DestinationPath C:\`,
+			`}`,
+			`$env:PATH = "C:\go\bin;" + $env:PATH`,
+			`$repoDir = ` + psSingleQuote(repoDir),
+			`$repoZipUrl = ` + psSingleQuote(repoZipURL),
+			`if ((-not $repoDir) -or (-not (Test-Path -LiteralPath $repoDir))) {`,
+			`  if (-not $repoZipUrl) { Write-Output "[trustinstall-winrm-it] ERROR: missing repo"; exit 2 }`,
+			`  $zipPath = "C:\Temp\trustinstall-src.zip"`,
+			`  New-Item -ItemType Directory -Force -Path C:\Temp | Out-Null`,
+			`  curl.exe -L $repoZipUrl -o $zipPath --max-time 600`,
+			`  $extractDir = Join-Path C:\Temp ("trustinstall-src-" + [guid]::NewGuid().ToString("N"))`,
+			`  New-Item -ItemType Directory -Force -Path $extractDir | Out-Null`,
+			`  Expand-Archive -Force -Path $zipPath -DestinationPath $extractDir`,
+			`  $repoDir = $extractDir`,
+			`}`,
+			`Set-Location -LiteralPath $repoDir`,
+			`Write-Output "[trustinstall-winrm-it] go version:"`,
+			`go version`,
+			`Write-Output "[trustinstall-winrm-it] running windows_integration tests..."`,
+			`go test ./... -tags windows_integration -run TestWindowsInstallUninstall_SystemTrust -count=1 -v`,
+		}, "\n")
+		encoded := encodePowerShellEncodedCommand(ps)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+		res, err := runWinRMEncodedPowerShell(ctx, endpoint, user, password, encoded)
+		if err == nil {
+			if testing.Verbose() {
+				t.Logf("windows output:\n%s%s", res.Stdout, res.Stderr)
 			}
-			var out bytes.Buffer
-			args := []string{
-				scriptPath,
-				"--endpoint", endpoint,
-				"--user", user,
-				"--password", password,
-			}
-			if repoDir != "" {
-				args = append(args, "--repo-dir", repoDir)
-			} else {
-				args = append(args, "--repo-zip-url", repoZipURL)
-			}
-			cmd := exec.Command("python3", args...)
-			cmd.Stdout = &out
-			cmd.Stderr = &out
-			if err := cmd.Run(); err == nil {
-				if testing.Verbose() {
-					t.Logf("windows output:\n%s", out.String())
-				}
-				return
-			} else if testing.Verbose() {
-				t.Logf("WinRM 运行失败，尝试 fallback 到 utmctl exec：%v\n%s", err, out.String())
-			}
+			return
+		}
+		if testing.Verbose() {
+			t.Logf("WinRM 运行失败，尝试 fallback 到 utmctl exec：%v\n%s%s", err, res.Stdout, res.Stderr)
 		}
 	}
 
