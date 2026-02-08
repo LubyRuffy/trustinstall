@@ -70,10 +70,7 @@ func installCA(dir, fileBaseName, commonName string, deleteSame bool, d installD
 	case err == nil:
 		// reuse existing
 	case errors.Is(err, os.ErrNotExist):
-		var genCert *x509.Certificate
-		var key crypto.Signer
-		var certPEM, keyPEM []byte
-		genCert, key, certPEM, keyPEM, genErr := generateSelfSignedCA(commonName, d.now(), d.randReader)
+		genCert, _, certPEM, keyPEM, genErr := generateSelfSignedCA(commonName, d.now(), d.randReader)
 		if genErr != nil {
 			return genErr
 		}
@@ -81,9 +78,6 @@ func installCA(dir, fileBaseName, commonName string, deleteSame bool, d installD
 			return writeErr
 		}
 
-		// Ensure we don't generate unused values (keep lints quiet).
-		_ = genCert
-		_ = key
 		cert = genCert
 	default:
 		return err

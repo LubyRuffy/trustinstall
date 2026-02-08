@@ -92,7 +92,10 @@ func TestMITMDynamicLeafCertificate(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		t.Fatalf("read body err=%v", readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		t.Fatalf("unexpected status=%d body=%q", resp.StatusCode, string(body))
 	}
@@ -412,7 +415,7 @@ type mitmRecord struct {
 	URL     string
 	ReqBody []byte
 
-	Status  string
+	Status   string
 	RespBody []byte
 }
 

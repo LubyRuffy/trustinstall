@@ -1,7 +1,6 @@
 package trustinstall
 
 import (
-	"crypto"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
@@ -38,9 +37,8 @@ func ensureCAFiles(dir, fileBaseName, commonName string, now func() time.Time, r
 	case err == nil:
 		return certFile, keyFile, cert, nil
 	case errors.Is(err, os.ErrNotExist):
-		var key crypto.Signer
 		var certPEM, keyPEM []byte
-		cert, key, certPEM, keyPEM, err = generateSelfSignedCA(commonName, now(), randReader)
+		cert, _, certPEM, keyPEM, err = generateSelfSignedCA(commonName, now(), randReader)
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -48,7 +46,6 @@ func ensureCAFiles(dir, fileBaseName, commonName string, now func() time.Time, r
 			return "", "", nil, err
 		}
 
-		_ = key
 		return certFile, keyFile, cert, nil
 	default:
 		return "", "", nil, err
