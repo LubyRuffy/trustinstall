@@ -184,6 +184,8 @@ TRUSTINSTALL_WINDOWS_INTEGRATION=1 go test ./integration -tags integration -run 
 
 在 Apple Silicon 上，更推荐用 UTM 跑一个 Windows VM（Windows ARM64），然后通过 SSH 远程触发 VM 内执行 `go test` 完成集成测试。
 
+更完整的“UTM 调用 VM 完成跨平台集成测试”技术方案文档见：`docs/utm-vm-cross-platform-integration-test.md`。
+
 前置条件：
 
 - Windows VM 内安装并启用 OpenSSH Server（确保 macOS 能 `ssh user@host` 连接）
