@@ -21,3 +21,6 @@ coverage.out
 *.msi
 *.dmg
 
+# generated desktop artifacts
+desktop/trustinstall-desktop/trustinstall-desktop
+desktop/trustinstall-desktop/build/darwin/Assets.car
