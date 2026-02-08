@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration || all_platform
 
 package integration
 
@@ -75,6 +75,20 @@ func guessUTMLinuxVMIdentifierFromDisk() string {
 		"ci-os-Linux",
 		"ci-ubuntu",
 		"ci-Ubuntu",
+	})
+}
+
+func guessUTMDarwinVMIdentifierFromDisk() string {
+	// Common CI names (prefer exact casing used by your fleet).
+	return guessUTMVMIdentifierFromDisk([]string{
+		"ci-macOS",
+		"ci-macos",
+		"ci-os-macOS",
+		"ci-os-macos",
+		"ci-os-darwin",
+		"ci-darwin",
+		"ci-os-osx",
+		"ci-osx",
 	})
 }
 
@@ -171,6 +185,17 @@ func utmctlIPv4WithRetry(identifier string, timeout time.Duration) (string, erro
 		utmLogf("[utm] ip-address attempt=%d id=%q", attempt, id)
 		out, err := runUTMCtl([]string{"ip-address", "--hide", id}, 30*time.Second)
 		lastOut, lastErr = out, err
+
+		// 不可恢复的后端限制：重试没有意义（例如 macOS guest 的某些后端不支持 ip-address）。
+		s := strings.ToLower(string(out))
+		if strings.Contains(s, "operation not supported by the backend") {
+			return "", fmt.Errorf("utmctl ip-address 后端不支持（identifier=%q）：%s", id, strings.TrimSpace(string(out)))
+		}
+		// AppleEvent/OSStatus 错误通常也不可通过重试解决；直接失败让调用方 fallback。
+		if isUTMCtlEventError(string(out)) {
+			return "", fmt.Errorf("utmctl ip-address AppleEvent/OSStatus 错误（identifier=%q）：%s", id, strings.TrimSpace(string(out)))
+		}
+
 		if err == nil {
 			if ip4, any := parseUTMCtlIPOutput(string(out)); ip4 != "" {
 				utmLogf("[utm] ip-address ok: id=%q ip=%s", id, ip4)
@@ -272,6 +297,58 @@ func discoverUTMLinuxIPv4(identifier string) (string, error) {
 	return ip, nil
 }
 
+func discoverUTMDarwinIPv4(identifier string) (string, error) {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_DARWIN_VM"))
+	}
+	if id == "" {
+		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_VM"))
+	}
+	if id == "" {
+		vms, _ := utmctlListVMs()
+		id = pickUTMDarwinVMIdentifier(vms)
+	}
+	if id == "" {
+		id = guessUTMDarwinVMIdentifierFromDisk()
+	}
+	if id == "" {
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_DARWIN_VM（或 TRUSTINSTALL_UTM_VM）为 macOS VM 完整名称或 UUID；或确保存在一个名称包含 macOS/darwin/osx 且以 %q 或 %q 开头的 VM（例如 ci-macOS）", defaultCIPrefixOS, defaultCIPrefixCI)
+	}
+
+	ensureUTMVMStartedBestEffort(id)
+
+	// 对于 macOS guest，utmctl ip-address 在部分后端/驱动上不支持（例如 “Operation not supported by the backend.”）。
+	// 优先从宿主机 DHCP 租约文件读取（bootpd 写入 /var/db/dhcpd_leases）。
+	leaseNames := strings.TrimSpace(os.Getenv("TRUSTINSTALL_DARWIN_DHCP_NAMES"))
+	var names []string
+	if leaseNames != "" {
+		for _, it := range strings.Split(leaseNames, ",") {
+			if s := strings.TrimSpace(it); s != "" {
+				names = append(names, s)
+			}
+		}
+	} else {
+		// 默认常用 hostname（用户可覆盖）。
+		names = []string{"cidexuniji", "ci-macOS"}
+	}
+	if ip, err := discoverDarwinVMIPv4ByDHCPLeases(names); err == nil && strings.TrimSpace(ip) != "" {
+		utmLogf("[utm] discover darwin ip via dhcpd_leases ok: names=%v ip=%s", names, ip)
+		return ip, nil
+	}
+
+	utmLogf("[utm] discover darwin ip via utmctl: id=%q", id)
+	ip, err := utmctlIPv4WithRetry(id, 90*time.Second)
+	if err != nil {
+		utmLogf("[utm] discover darwin ip failed, fallback to scan: err=%v", err)
+		if ip2, scanErr := discoverDarwinVMIPv4ByScan(22); scanErr == nil {
+			return ip2, nil
+		}
+		return "", err
+	}
+	return ip, nil
+}
+
 func pickUTMVMIdentifier(vms []utmVM) string {
 	if len(vms) == 0 {
 		return ""
@@ -342,6 +419,50 @@ func pickUTMLinuxVMIdentifier(vms []utmVM) string {
 	return ""
 }
 
+func pickUTMDarwinVMIdentifier(vms []utmVM) string {
+	// Prefer CI macOS VMs (ci-os-*) first, then ci-*; only match likely macOS names.
+	type cand struct {
+		score int
+		id    string
+	}
+	var cands []cand
+	for _, vm := range vms {
+		name := strings.ToLower(strings.TrimSpace(vm.Name))
+		id := strings.TrimSpace(vm.UUID)
+		if name == "" || id == "" {
+			continue
+		}
+		isMac := strings.Contains(name, "mac") || strings.Contains(name, "darwin") || strings.Contains(name, "osx")
+		if !isMac {
+			continue
+		}
+		score := 0
+		if strings.HasPrefix(name, defaultCIPrefixOS) {
+			score += 100
+		} else if strings.HasPrefix(name, defaultCIPrefixCI) {
+			score += 50
+		}
+		// Prefer explicit markers.
+		if strings.Contains(name, "macos") {
+			score += 20
+		}
+		if strings.Contains(name, "darwin") {
+			score += 10
+		}
+		cands = append(cands, cand{score: score, id: vm.UUID})
+	}
+	if len(cands) == 0 {
+		return ""
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].score == cands[j].score {
+			return cands[i].id < cands[j].id
+		}
+		return cands[i].score > cands[j].score
+	})
+	return cands[0].id
+}
+
 func utmctlListVMs() ([]utmVM, error) {
 	// Try with --hide first (CI/headless), then without --hide.
 	if vms, err := utmctlListVMsOnce(true); len(vms) > 0 || err == nil {
@@ -391,6 +512,9 @@ func utmctlListVMsOnce(hide bool) ([]utmVM, error) {
 }
 
 func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
+	if _, err := os.Stat(utmctlPath()); err != nil {
+		return "", fmt.Errorf("未找到 utmctl（%s）", utmctlPath())
+	}
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		// Same selection logic as discoverUTMIPv4
@@ -408,19 +532,24 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 	}
 
 	// Best effort: ensure VM is started before exec.
+	utmLogf("[utm] exec(windows) start-vm: id=%q", id)
 	_ = utmctlStart(id, true)
 	_ = utmctlStart(id, false)
 
 	deadline := time.Now().Add(12 * time.Minute)
 	var lastOut string
 	var lastErr error
+	attempt := 0
 	for time.Now().Before(deadline) {
+		attempt++
+		utmLogf("[utm] exec(windows) attempt=%d hide=true id=%q cmd=%q", attempt, id, strings.Join(cmdArgs, " "))
 		out, err := utmctlExecOnce(id, true, cmdArgs...)
 		if err == nil {
 			return out, nil
 		}
 		lastOut, lastErr = out, err
 
+		utmLogf("[utm] exec(windows) attempt=%d hide=false id=%q cmd=%q", attempt, id, strings.Join(cmdArgs, " "))
 		out2, err2 := utmctlExecOnce(id, false, cmdArgs...)
 		if err2 == nil {
 			return out2, nil
@@ -429,6 +558,7 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 			lastOut, lastErr = out2, err2
 		}
 
+		utmLogf("[utm] exec(windows) retry after failure: id=%q err=%v", id, lastErr)
 		_ = utmctlStart(id, true)
 		_ = utmctlStart(id, false)
 		time.Sleep(5 * time.Second)
@@ -440,6 +570,9 @@ func utmctlExec(identifier string, cmdArgs ...string) (string, error) {
 }
 
 func utmctlExecLinux(identifier string, cmdArgs ...string) (string, error) {
+	if _, err := os.Stat(utmctlPath()); err != nil {
+		return "", fmt.Errorf("未找到 utmctl（%s）", utmctlPath())
+	}
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_LINUX_VM"))
@@ -459,19 +592,24 @@ func utmctlExecLinux(identifier string, cmdArgs ...string) (string, error) {
 	}
 
 	// Best effort: ensure VM is started before exec.
+	utmLogf("[utm] exec(linux) start-vm: id=%q", id)
 	_ = utmctlStart(id, true)
 	_ = utmctlStart(id, false)
 
 	deadline := time.Now().Add(12 * time.Minute)
 	var lastOut string
 	var lastErr error
+	attempt := 0
 	for time.Now().Before(deadline) {
+		attempt++
+		utmLogf("[utm] exec(linux) attempt=%d hide=true id=%q cmd=%q", attempt, id, strings.Join(cmdArgs, " "))
 		out, err := utmctlExecOnce(id, true, cmdArgs...)
 		if err == nil {
 			return out, nil
 		}
 		lastOut, lastErr = out, err
 
+		utmLogf("[utm] exec(linux) attempt=%d hide=false id=%q cmd=%q", attempt, id, strings.Join(cmdArgs, " "))
 		out2, err2 := utmctlExecOnce(id, false, cmdArgs...)
 		if err2 == nil {
 			return out2, nil
@@ -480,6 +618,7 @@ func utmctlExecLinux(identifier string, cmdArgs ...string) (string, error) {
 			lastOut, lastErr = out2, err2
 		}
 
+		utmLogf("[utm] exec(linux) retry after failure: id=%q err=%v", id, lastErr)
 		_ = utmctlStart(id, true)
 		_ = utmctlStart(id, false)
 		time.Sleep(5 * time.Second)
@@ -488,6 +627,55 @@ func utmctlExecLinux(identifier string, cmdArgs ...string) (string, error) {
 		lastErr = fmt.Errorf("unknown error")
 	}
 	return lastOut, fmt.Errorf("utmctl exec 超时: %w: %s", lastErr, lastOut)
+}
+
+func utmctlExecDarwin(identifier string, cmdArgs ...string) (string, error) {
+	if _, err := os.Stat(utmctlPath()); err != nil {
+		return "", fmt.Errorf("未找到 utmctl（%s）", utmctlPath())
+	}
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_DARWIN_VM"))
+	}
+	if id == "" {
+		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_VM"))
+	}
+	if id == "" {
+		vms, _ := utmctlListVMs()
+		id = pickUTMDarwinVMIdentifier(vms)
+	}
+	if id == "" {
+		id = guessUTMDarwinVMIdentifierFromDisk()
+	}
+	if id == "" {
+		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_DARWIN_VM（或 TRUSTINSTALL_UTM_VM）为 macOS VM 完整名称或 UUID；或确保存在一个名称包含 macOS/darwin/osx 且以 %q 或 %q 开头的 VM（例如 ci-macOS）", defaultCIPrefixOS, defaultCIPrefixCI)
+	}
+
+	// Best effort: ensure VM is started before exec.
+	utmLogf("[utm] exec(darwin) start-vm: id=%q", id)
+	_ = utmctlStart(id, true)
+	_ = utmctlStart(id, false)
+
+	var lastOut string
+	var lastErr error
+	// macOS guest 上 utmctl exec 很容易因为 AppleEvent/TCC 或“非当前终端会话”导致 OSStatus 错误；
+	// 这类错误重试没有意义，应快速失败并让调用方改用 SSH。
+	utmLogf("[utm] exec(darwin) attempt=1 hide=true id=%q cmd=%q", id, strings.Join(cmdArgs, " "))
+	out, err := utmctlExecOnce(id, true, cmdArgs...)
+	if err == nil {
+		return out, nil
+	}
+	lastOut, lastErr = out, err
+
+	utmLogf("[utm] exec(darwin) attempt=1 hide=false id=%q cmd=%q", id, strings.Join(cmdArgs, " "))
+	out2, err2 := utmctlExecOnce(id, false, cmdArgs...)
+	if err2 == nil {
+		return out2, nil
+	}
+	if strings.TrimSpace(out2) != "" {
+		lastOut, lastErr = out2, err2
+	}
+	return lastOut, fmt.Errorf("utmctl exec(darwin) 失败（不重试，建议改用 SSH 执行）: %w: %s", lastErr, lastOut)
 }
 
 func utmctlExecOnce(identifier string, hide bool, cmdArgs ...string) (string, error) {

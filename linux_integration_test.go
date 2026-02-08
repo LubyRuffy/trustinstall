@@ -1,4 +1,4 @@
-//go:build linux && linux_integration
+//go:build linux && (linux_integration || all_platform)
 
 package trustinstall
 

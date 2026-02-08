@@ -1,4 +1,4 @@
-//go:build windows && windows_integration
+//go:build windows && (windows_integration || all_platform)
 
 package trustinstall
 

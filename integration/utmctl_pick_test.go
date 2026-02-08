@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration || all_platform
 
 package integration
 
@@ -39,6 +39,18 @@ func TestPickUTMLinuxVMIdentifier_LinuxPreference(t *testing.T) {
 	got := pickUTMLinuxVMIdentifier(vms)
 	// Prefer Linux first match in CI list order (as returned by utmctl list).
 	if got != "ci-Linux" && got != "ci-Ubuntu" {
+		t.Fatalf("unexpected: %q", got)
+	}
+}
+
+func TestPickUTMDarwinVMIdentifier_MacPreference(t *testing.T) {
+	vms := []utmVM{
+		{UUID: "11111111-1111-1111-1111-111111111111", Name: "ci-Linux"},
+		{UUID: "22222222-2222-2222-2222-222222222222", Name: "ci-Windows"},
+		{UUID: "33333333-3333-3333-3333-333333333333", Name: "ci-macOS"},
+	}
+	got := pickUTMDarwinVMIdentifier(vms)
+	if got != "33333333-3333-3333-3333-333333333333" {
 		t.Fatalf("unexpected: %q", got)
 	}
 }

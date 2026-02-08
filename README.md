@@ -283,6 +283,53 @@ go test ./integration -tags integration -run TestUTMWindowsWinRMIntegration -cou
 - 在 hostname 以 `ci` 或 `ci-` 开头、或环境变量 `CI` 存在时，即使不设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION` 也会默认运行。
 - 如需关闭：设置 `TRUSTINSTALL_WINDOWS_WINRM_INTEGRATION=0`（或 `false/no/off`）。
 
+## 集成测试（HTTPS MITM 动态 Leaf 证书）
+
+该集成测试会启动一个本地 HTTP 代理（支持 `CONNECT`），对指定 HTTPS 站点进行 MITM：
+
+- 代理侧用 `Client.LeafCertificate(host)` 动态签发叶子证书
+- Go `http.Client` 走代理访问 `https://ip.bmh.im/c`
+- 断言代理侧能拿到解密后的明文请求/响应（至少包含 URL 和响应 body）
+
+### 本机集成测试（默认）
+
+运行（需要外网访问 `ip.bmh.im`）：
+
+```bash
+TRUSTINSTALL_INTEGRATION=1 \
+go test ./integration -tags integration -run TestMITMDynamicLeafCertificate -count=1 -v
+```
+
+### 三平台集成测试（all_platform，经由 UTM）
+
+当启用 `all_platform` tag 时，同一个测试会在 macOS 宿主机上通过 UTM 分别在 Linux/Windows/macOS guest 内执行：
+
+- Linux guest：`utmctl exec`
+- Windows guest：`utmctl exec`
+- macOS guest：通过 SSH 执行（避免 `utmctl ip-address/exec` 在部分后端返回 “Operation not supported by the backend.” 或 AppleEvent/OSStatus 错误）
+
+运行（在 macOS 宿主机上）：
+
+```bash
+go test ./integration -tags all_platform -run TestMITMDynamicLeafCertificate -count=1 -v
+```
+
+只跑单个平台（使用子测试名过滤）：
+
+```bash
+go test ./integration -tags all_platform -run '^TestMITMDynamicLeafCertificate/linux$' -count=1 -v
+go test ./integration -tags all_platform -run '^TestMITMDynamicLeafCertificate/windows$' -count=1 -v
+go test ./integration -tags all_platform -run '^TestMITMDynamicLeafCertificate/darwin$' -count=1 -v
+```
+
+常用可选环境变量（不设置也会尝试默认路径/自动发现）：
+
+- `TRUSTINSTALL_UTM_LINUX_VM` / `TRUSTINSTALL_UTM_WINDOWS_VM` / `TRUSTINSTALL_UTM_DARWIN_VM`：指定 UTM VM 标识（名称或 UUID）
+- `TRUSTINSTALL_LINUX_REPO_DIR` / `TRUSTINSTALL_WINDOWS_REPO_DIR` / `TRUSTINSTALL_DARWIN_REPO_DIR`：guest 内仓库路径覆盖（默认会尝试若干常见路径并校验 `go.mod`）
+- `TRUSTINSTALL_DARWIN_SSH_HOST` / `TRUSTINSTALL_DARWIN_SSH_USER` / `TRUSTINSTALL_DARWIN_SSH_PORT`：macOS guest SSH 连接参数（默认 user=ci, port=22）
+- `TRUSTINSTALL_DARWIN_DISCOVERY_CIDRS`：macOS guest IP 端口扫描网段（默认 `192.168.64.0/24`，扫描 22 端口）
+- `TRUSTINSTALL_DARWIN_DHCP_NAMES`：从宿主机 `/var/db/dhcpd_leases` 中匹配的 hostname 列表（逗号分隔），用于在 utmctl ip-address 不支持时定位 macOS guest IP（默认 `cidexuniji,ci-macOS`）
+
 ## 关于 SSL Pinning / 证书绑定（后续支持说明）
 
 很多 App/SDK 会做“证书绑定”（SSL Pinning），常见形式包括：
