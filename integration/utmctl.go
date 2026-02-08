@@ -629,55 +629,6 @@ func utmctlExecLinux(identifier string, cmdArgs ...string) (string, error) {
 	return lastOut, fmt.Errorf("utmctl exec 超时: %w: %s", lastErr, lastOut)
 }
 
-func utmctlExecDarwin(identifier string, cmdArgs ...string) (string, error) {
-	if _, err := os.Stat(utmctlPath()); err != nil {
-		return "", fmt.Errorf("未找到 utmctl（%s）", utmctlPath())
-	}
-	id := strings.TrimSpace(identifier)
-	if id == "" {
-		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_DARWIN_VM"))
-	}
-	if id == "" {
-		id = strings.TrimSpace(os.Getenv("TRUSTINSTALL_UTM_VM"))
-	}
-	if id == "" {
-		vms, _ := utmctlListVMs()
-		id = pickUTMDarwinVMIdentifier(vms)
-	}
-	if id == "" {
-		id = guessUTMDarwinVMIdentifierFromDisk()
-	}
-	if id == "" {
-		return "", fmt.Errorf("未提供 UTM VM 标识：请设置 TRUSTINSTALL_UTM_DARWIN_VM（或 TRUSTINSTALL_UTM_VM）为 macOS VM 完整名称或 UUID；或确保存在一个名称包含 macOS/darwin/osx 且以 %q 或 %q 开头的 VM（例如 ci-macOS）", defaultCIPrefixOS, defaultCIPrefixCI)
-	}
-
-	// Best effort: ensure VM is started before exec.
-	utmLogf("[utm] exec(darwin) start-vm: id=%q", id)
-	_ = utmctlStart(id, true)
-	_ = utmctlStart(id, false)
-
-	var lastOut string
-	var lastErr error
-	// macOS guest 上 utmctl exec 很容易因为 AppleEvent/TCC 或“非当前终端会话”导致 OSStatus 错误；
-	// 这类错误重试没有意义，应快速失败并让调用方改用 SSH。
-	utmLogf("[utm] exec(darwin) attempt=1 hide=true id=%q cmd=%q", id, strings.Join(cmdArgs, " "))
-	out, err := utmctlExecOnce(id, true, cmdArgs...)
-	if err == nil {
-		return out, nil
-	}
-	lastOut, lastErr = out, err
-
-	utmLogf("[utm] exec(darwin) attempt=1 hide=false id=%q cmd=%q", id, strings.Join(cmdArgs, " "))
-	out2, err2 := utmctlExecOnce(id, false, cmdArgs...)
-	if err2 == nil {
-		return out2, nil
-	}
-	if strings.TrimSpace(out2) != "" {
-		lastOut, lastErr = out2, err2
-	}
-	return lastOut, fmt.Errorf("utmctl exec(darwin) 失败（不重试，建议改用 SSH 执行）: %w: %s", lastErr, lastOut)
-}
-
 func utmctlExecOnce(identifier string, hide bool, cmdArgs ...string) (string, error) {
 	args := []string{"exec"}
 	if hide {

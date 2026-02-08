@@ -83,6 +83,7 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// For plain HTTP proxy requests, URL is absolute-form (e.g. http://host/path).
 	reqCopy := r.Clone(r.Context())
+	prepareOutgoingRequest(reqCopy, "http")
 	body, _ := readAllLimited(reqCopy.Body, p.maxBodySize)
 	_ = reqCopy.Body.Close()
 	reqCopy.Body = io.NopCloser(bytes.NewReader(body))
@@ -157,7 +158,7 @@ func (p *proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 			<-r.Context().Done()
 			_ = upstreamTLS.Close()
 		}()
-		p.serveMITMHTTP(serverTLS, upstreamTLS, host)
+		p.serveMITMHTTP(serverTLS, upstreamTLS, addr)
 	}
 }
 
@@ -245,7 +246,7 @@ func (p *proxy) dialUpstreamTLSWithALPN(ctx context.Context, addr, serverName, a
 	return tlsConn, nil
 }
 
-func (p *proxy) serveMITMHTTP(clientTLS, upstreamTLS net.Conn, host string) {
+func (p *proxy) serveMITMHTTP(clientTLS, upstreamTLS net.Conn, hostport string) {
 	clientR := bufio.NewReader(clientTLS)
 	upstreamR := bufio.NewReader(upstreamTLS)
 
@@ -258,7 +259,11 @@ func (p *proxy) serveMITMHTTP(clientTLS, upstreamTLS net.Conn, host string) {
 		}
 
 		req.URL.Scheme = "https"
-		req.URL.Host = host
+		req.URL.Host = hostport
+		if req.Host == "" {
+			req.Host = hostport
+		}
+		prepareOutgoingRequest(req, "https")
 
 		reqBody, _ := readAllLimited(req.Body, p.maxBodySize)
 		_ = req.Body.Close()
@@ -357,8 +362,8 @@ func (p *proxy) serveMITMHTTP2(ctx context.Context, clientTLS *tls.Conn, upstrea
 }
 
 func (p *proxy) printRequest(proto string, r *http.Request, body []byte) {
-	// Avoid dumping raw Authorization cookies etc for safety; keep minimal.
-	dump, _ := httputil.DumpRequest(r, false)
+	// Avoid dumping secrets (Authorization/Cookie etc).
+	dump, _ := httputil.DumpRequest(sanitizeRequestForDump(r), false)
 	fmt.Printf("\n==== %s REQUEST ====\n%s", proto, string(dump))
 	if len(body) > 0 {
 		fmt.Printf("\n---- body (%d bytes) ----\n%s\n", len(body), printable(body))
@@ -366,16 +371,64 @@ func (p *proxy) printRequest(proto string, r *http.Request, body []byte) {
 }
 
 func (p *proxy) printResponse(proto string, req *http.Request, resp *http.Response, body []byte) {
-	dump, _ := httputil.DumpResponse(resp, false)
+	dump, _ := httputil.DumpResponse(sanitizeResponseForDump(resp), false)
 	fmt.Printf("\n==== %s RESPONSE (%s %s) ====\n%s", proto, req.Method, req.URL.String(), string(dump))
 	if len(body) > 0 {
 		fmt.Printf("\n---- body (%d bytes) ----\n%s\n", len(body), printable(body))
 	}
 }
 
+func prepareOutgoingRequest(r *http.Request, defaultScheme string) {
+	// Transport.RoundTrip / Request.Write require RequestURI to be empty.
+	r.RequestURI = ""
+
+	if r.URL != nil {
+		if strings.TrimSpace(r.URL.Scheme) == "" {
+			r.URL.Scheme = defaultScheme
+		}
+		// Some clients may send origin-form to a proxy; fill host from Host header.
+		if strings.TrimSpace(r.URL.Host) == "" {
+			r.URL.Host = r.Host
+		}
+		if r.URL.Path == "" {
+			r.URL.Path = "/"
+		}
+	}
+}
+
+func sanitizeRequestForDump(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+	rc := r.Clone(r.Context())
+	rc.Header = r.Header.Clone()
+	// Common secrets in proxy traffic.
+	rc.Header.Del("Authorization")
+	rc.Header.Del("Proxy-Authorization")
+	rc.Header.Del("Cookie")
+	rc.Header.Del("X-Api-Key")
+	rc.Header.Del("X-API-Key")
+	rc.Header.Del("X-Auth-Token")
+	return rc
+}
+
+func sanitizeResponseForDump(resp *http.Response) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	c := new(http.Response)
+	*c = *resp
+	c.Header = resp.Header.Clone()
+	c.Header.Del("Set-Cookie")
+	return c
+}
+
 func readAllLimited(rc io.ReadCloser, limit int64) ([]byte, error) {
 	if rc == nil {
 		return nil, nil
+	}
+	if limit < 0 {
+		limit = 0
 	}
 	lr := &io.LimitedReader{R: rc, N: limit + 1}
 	b, err := io.ReadAll(lr)

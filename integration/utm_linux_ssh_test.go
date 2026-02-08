@@ -172,7 +172,7 @@ func TestUTMLinuxIntegration(t *testing.T) {
 	t.Logf("[linux-it] check remote go.mod: %s", goModPath)
 	ctxCheck, cancelCheck := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelCheck()
-	outC, checkErr := runSSHCommandGoWithOptions(ctxCheck, host, port, user, checkCmd, sshRunOptions{})
+	outC, checkErr := runSSHCommandGo(ctxCheck, host, port, user, checkCmd)
 	if checkErr != nil {
 		if ctxCheck.Err() != nil {
 			t.Logf("[linux-it] check remote go.mod timeout (%v), treat as missing and upload", ctxCheck.Err())
