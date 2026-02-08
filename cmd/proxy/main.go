@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/LubyRuffy/trustinstall"
+	"golang.org/x/net/http2"
 )
 
 func main() {
@@ -47,6 +48,7 @@ func main() {
 	p := &proxy{
 		ti:          ti,
 		maxBodySize: *maxBodySize,
+		dialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 	}
 
 	srv := &http.Server{
@@ -65,6 +67,9 @@ func main() {
 type proxy struct {
 	ti          *trustinstall.Client
 	maxBodySize int64
+
+	// For tests or special routing; default is net.Dialer.DialContext.
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -125,60 +130,114 @@ func (p *proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 
 	host, port := splitHostPortDefault(r.Host, "443")
-	serverTLS, err := p.newMITMTLSServer(clientConn, host)
+	addr := net.JoinHostPort(host, port)
+
+	serverTLS, negotiatedALPN, err := p.newMITMTLSServerWithALPNProbe(r.Context(), clientConn, addr, host)
 	if err != nil {
 		_ = clientConn.Close()
-		return
-	}
-
-	upstreamTLS, err := p.dialUpstreamTLS(r.Context(), net.JoinHostPort(host, port), host)
-	if err != nil {
-		_ = serverTLS.Close()
 		return
 	}
 
 	go func() {
 		<-r.Context().Done()
 		_ = serverTLS.Close()
-		_ = upstreamTLS.Close()
 	}()
 
-	p.serveMITMHTTP(serverTLS, upstreamTLS, host)
+	switch negotiatedALPN {
+	case "h2":
+		p.serveMITMHTTP2(r.Context(), serverTLS, addr, host)
+	default:
+		// Includes empty ALPN (older servers) which we normalize to HTTP/1.1.
+		upstreamTLS, err := p.dialUpstreamTLSWithALPN(r.Context(), addr, host, negotiatedALPN)
+		if err != nil {
+			_ = serverTLS.Close()
+			return
+		}
+		go func() {
+			<-r.Context().Done()
+			_ = upstreamTLS.Close()
+		}()
+		p.serveMITMHTTP(serverTLS, upstreamTLS, host)
+	}
 }
 
-func (p *proxy) newMITMTLSServer(conn net.Conn, host string) (*tls.Conn, error) {
-	certPEM, keyPEM, err := p.ti.LeafCertificate(host)
+func (p *proxy) newMITMTLSServerWithALPNProbe(ctx context.Context, conn net.Conn, upstreamAddr, upstreamServerName string) (*tls.Conn, string, error) {
+	certPEM, keyPEM, err := p.ti.LeafCertificate(upstreamServerName)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+
+	var negotiated string
 	tlsConn := tls.Server(conn, &tls.Config{
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"http/1.1"},
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			clientProtos := filterHTTPALPNs(hello.SupportedProtos)
+			upProto, err := p.probeUpstreamALPN(ctx, upstreamAddr, upstreamServerName, clientProtos)
+			if err != nil {
+				return nil, err
+			}
+			if !containsString(clientProtos, upProto) {
+				return nil, fmt.Errorf("upstream negotiated %q but client does not support it (client=%v)", upProto, clientProtos)
+			}
+			negotiated = upProto
+			// Mirror upstream selection to the client side: two-stage ALPN negotiation.
+			cfg := &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{cert},
+				NextProtos:   []string{upProto},
+			}
+			return cfg, nil
+		},
 	})
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		_ = tlsConn.Close()
-		return nil, err
+		return nil, "", err
 	}
-	return tlsConn, nil
+	if negotiated == "" {
+		negotiated = normalizeALPN(tlsConn.ConnectionState().NegotiatedProtocol)
+	}
+	return tlsConn, negotiated, nil
 }
 
-func (p *proxy) dialUpstreamTLS(ctx context.Context, addr, serverName string) (*tls.Conn, error) {
-	d := &net.Dialer{Timeout: 10 * time.Second}
-	raw, err := d.DialContext(ctx, "tcp", addr)
+func (p *proxy) probeUpstreamALPN(ctx context.Context, addr, serverName string, clientProtos []string) (string, error) {
+	raw, err := p.dialContext(ctx, "tcp", addr)
+	if err != nil {
+		return "", err
+	}
+
+	tlsConn := tls.Client(raw, &tls.Config{
+		ServerName: serverName,
+		NextProtos: clientProtos,
+		// RootCAs 为 nil 时使用系统根证书，适合做上游校验。
+		MinVersion: tls.VersionTLS12,
+	})
+
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = tlsConn.Close()
+		return "", err
+	}
+	neg := normalizeALPN(tlsConn.ConnectionState().NegotiatedProtocol)
+	_ = tlsConn.Close()
+	return neg, nil
+}
+
+func (p *proxy) dialUpstreamTLSWithALPN(ctx context.Context, addr, serverName, alpn string) (*tls.Conn, error) {
+	raw, err := p.dialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 
 	tlsConn := tls.Client(raw, &tls.Config{
 		ServerName: serverName,
-		NextProtos: []string{"http/1.1"},
+		NextProtos: []string{alpn},
+		MinVersion: tls.VersionTLS12,
 		// RootCAs 为 nil 时使用系统根证书，适合做上游校验。
 	})
-
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		_ = tlsConn.Close()
 		return nil, err
@@ -234,6 +293,67 @@ func (p *proxy) serveMITMHTTP(clientTLS, upstreamTLS net.Conn, host string) {
 			return
 		}
 	}
+}
+
+func (p *proxy) serveMITMHTTP2(ctx context.Context, clientTLS *tls.Conn, upstreamAddr, upstreamServerName string) {
+	tr := &http2.Transport{
+		TLSClientConfig: &tls.Config{
+			ServerName: upstreamServerName,
+			NextProtos: []string{"h2"},
+			MinVersion: tls.VersionTLS12,
+		},
+		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+			raw, err := p.dialContext(ctx, network, upstreamAddr)
+			if err != nil {
+				return nil, err
+			}
+			tlsConn := tls.Client(raw, cfg)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				_ = tlsConn.Close()
+				return nil, err
+			}
+			return tlsConn, nil
+		},
+	}
+	defer tr.CloseIdleConnections()
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqBody, _ := readAllLimited(r.Body, p.maxBodySize)
+		_ = r.Body.Close()
+
+		outReq := r.Clone(r.Context())
+		outReq.RequestURI = ""
+		outReq.URL.Scheme = "https"
+		outReq.URL.Host = upstreamAddr
+		outReq.Host = upstreamServerName
+		outReq.Body = io.NopCloser(bytes.NewReader(reqBody))
+		outReq.ContentLength = int64(len(reqBody))
+
+		p.printRequest("HTTPS(h2)", outReq, reqBody)
+
+		resp, err := (&http.Client{Transport: tr}).Do(outReq)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		respBody, _ := readAllLimited(resp.Body, p.maxBodySize)
+
+		p.printResponse("HTTPS(h2)", outReq, resp, respBody)
+
+		copyHeader(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(respBody)
+	})
+
+	var s http2.Server
+	s.ServeConn(clientTLS, &http2.ServeConnOpts{
+		BaseConfig: &http.Server{
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		Handler: h,
+	})
 }
 
 func (p *proxy) printRequest(proto string, r *http.Request, body []byte) {
@@ -296,4 +416,40 @@ func defaultCADir() string {
 		return ".trustinstall"
 	}
 	return filepath.Join(home, ".trustinstall")
+}
+
+func normalizeALPN(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return "http/1.1"
+	}
+	return p
+}
+
+func filterHTTPALPNs(in []string) []string {
+	// Only keep the protocols we can actually speak in MITM mode.
+	var out []string
+	seen := make(map[string]struct{}, 2)
+	for _, p := range in {
+		if p != "h2" && p != "http/1.1" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return []string{"http/1.1"}
+	}
+	return out
+}
+
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
