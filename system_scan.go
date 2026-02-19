@@ -35,8 +35,7 @@ func scanCertificatesByCommonName(dirs []string, commonName string) ([]systemCer
 				return nil
 			}
 
-			ext := strings.ToLower(filepath.Ext(d.Name()))
-			if ext != ".crt" && ext != ".pem" && ext != ".cer" && ext != ".der" {
+			if !isCertCandidateFile(d.Name()) {
 				return nil
 			}
 
@@ -59,4 +58,22 @@ func scanCertificatesByCommonName(dirs []string, commonName string) ([]systemCer
 	}
 
 	return out, nil
+}
+
+func isCertCandidateFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(name)))
+	switch ext {
+	case ".crt", ".pem", ".cer", ".der":
+		return true
+	}
+	// Linux system store commonly exposes cert symlinks like "<hash>.0".
+	if len(ext) > 1 {
+		for _, ch := range ext[1:] {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

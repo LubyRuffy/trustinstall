@@ -1,4 +1,4 @@
-//go:build integration || all_platform
+？//go:build integration
 
 package integration
 

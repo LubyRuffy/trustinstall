@@ -3,7 +3,7 @@
 一个基于 [`github.com/smallstep/truststore`](https://github.com/smallstep/truststore) 的最小封装，用于：
 
 - 生成自签名根证书（CA）
-- 安装到 macOS 系统钥匙串并设置为“始终信任”
+- 安装到 macOS/Linux/Windows 系统信任存储（macOS 下会设置为“始终信任”）
 - 基于该 CA 动态签发指定 host 的叶子证书（用于 HTTPS MITM/调试）
 
 注意：本项目仅面向开发/调试用途。拦截与解密他人流量可能违法，请确保只在你有权限的环境中使用。
