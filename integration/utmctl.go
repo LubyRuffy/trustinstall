@@ -186,6 +186,16 @@ func utmctlIPv4WithRetry(identifier string, timeout time.Duration) (string, erro
 		out, err := runUTMCtl([]string{"ip-address", "--hide", id}, 30*time.Second)
 		lastOut, lastErr = out, err
 
+		// If any parseable IP can be extracted, treat it as success first.
+		if ip4, any := parseUTMCtlIPOutput(string(out)); ip4 != "" || any != "" {
+			if ip4 != "" {
+				utmLogf("[utm] ip-address ok: id=%q ip=%s", id, ip4)
+				return ip4, nil
+			}
+			utmLogf("[utm] ip-address ok: id=%q ip=%s", id, any)
+			return any, nil
+		}
+
 		// 不可恢复的后端限制：重试没有意义（例如 macOS guest 的某些后端不支持 ip-address）。
 		s := strings.ToLower(string(out))
 		if strings.Contains(s, "operation not supported by the backend") {

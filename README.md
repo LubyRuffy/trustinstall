@@ -151,7 +151,14 @@ wails3 dev
 
 ```bash
 TRUSTINSTALL_INTEGRATION=1 go test ./... -tags integration -run TestDockerLinuxIntegration -count=1
+# 或使用 Linux Docker 专用开关（推荐）
+TRUSTINSTALL_LINUX_DOCKER_INTEGRATION=1 go test ./... -tags integration -run TestDockerLinuxIntegration -count=1
 ```
+
+可选环境变量：
+
+- `TRUSTINSTALL_DOCKER_IMAGE`：容器镜像，默认 `golang:1.25.5-bookworm`
+- `TRUSTINSTALL_LINUX_DOCKER_INTEGRATION`：显式开启/关闭该测试（支持 true/false/1/0）；设置为 true 时若 docker 不可用会直接失败而非跳过
 
 ## Docker 集成测试（Windows via dockur/windows）
 
